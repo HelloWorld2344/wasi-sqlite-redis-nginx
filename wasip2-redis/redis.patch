@@ -1,0 +1,1884 @@
+diff --git a/.gitignore b/.gitignore
+index 5ed94f1..f52ffb2 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,43 +1,4 @@
+-.*.swp
+ *.o
+-*.xo
+-*.so
+-*.d
+-*.log
+-dump.rdb
+-redis-benchmark
+-redis-check-aof
+-redis-check-rdb
+-redis-check-dump
+-redis-cli
+-redis-sentinel
+-redis-server
+-doc-tools
+-release
+-misc/*
+-src/release.h
+-appendonly.aof*
+-appendonlydir
+-SHORT_TERM_TODO
+-release.h
+-src/transfer.sh
+-src/configs
+-redis.ds
+-src/redis.conf
+-src/nodes.conf
+-deps/lua/src/lua
+-deps/lua/src/luac
+-deps/lua/src/liblua.a
+-deps/hdr_histogram/libhdrhistogram.a
+-deps/fpconv/libfpconv.a
+-tests/tls/*
+-.make-*
+-.prerequisites
+-*.dSYM
+-Makefile.dep
+-.vscode/*
+-.idea/*
+-.ccls
+-.ccls-cache/*
+-compile_commands.json
+-redis.code-workspace
++*.wasm
++src/redis-cli
++src/redis-server
+diff --git a/deps/.make-cflags b/deps/.make-cflags
+new file mode 100644
+index 0000000..3a3b579
+--- /dev/null
++++ b/deps/.make-cflags
+@@ -0,0 +1 @@
++-O2
+diff --git a/deps/.make-ldflags b/deps/.make-ldflags
+new file mode 100644
+index 0000000..8b13789
+--- /dev/null
++++ b/deps/.make-ldflags
+@@ -0,0 +1 @@
++
+diff --git a/deps/.make-prerequisites b/deps/.make-prerequisites
+new file mode 100644
+index 0000000..e69de29
+diff --git a/deps/hiredis/Makefile b/deps/hiredis/Makefile
+index bd2106b..37195dc 100644
+--- a/deps/hiredis/Makefile
++++ b/deps/hiredis/Makefile
+@@ -39,7 +39,7 @@ export REDIS_TEST_CONFIG
+ CC:=$(shell sh -c 'type $${CC%% *} >/dev/null 2>/dev/null && echo $(CC) || echo gcc')
+ CXX:=$(shell sh -c 'type $${CXX%% *} >/dev/null 2>/dev/null && echo $(CXX) || echo g++')
+ OPTIMIZATION?=-O3
+-WARNINGS=-Wall -Wextra -Werror -Wstrict-prototypes -Wwrite-strings -Wno-missing-field-initializers
++WARNINGS=-Wall -Wextra  -Wstrict-prototypes -Wwrite-strings -Wno-missing-field-initializers
+ DEBUG_FLAGS?= -g -ggdb
+ REAL_CFLAGS=$(OPTIMIZATION) -fPIC $(CPPFLAGS) $(CFLAGS) $(WARNINGS) $(DEBUG_FLAGS) $(PLATFORM_FLAGS)
+ REAL_LDFLAGS=$(LDFLAGS)
+diff --git a/deps/hiredis/net.c b/deps/hiredis/net.c
+index 33fe0b9..d0459e4 100644
+--- a/deps/hiredis/net.c
++++ b/deps/hiredis/net.c
+@@ -119,6 +119,8 @@ static int redisSetReuseAddr(redisContext *c) {
+     return REDIS_OK;
+ }
+ 
++#ifndef __wasi__
++/* 仅 unix socket 连接路径使用；wasi 下该路径被编译掉 */
+ static int redisCreateSocket(redisContext *c, int type) {
+     redisFD s;
+     if ((s = socket(type, SOCK_STREAM, 0)) == REDIS_INVALID_FD) {
+@@ -133,6 +135,7 @@ static int redisCreateSocket(redisContext *c, int type) {
+     }
+     return REDIS_OK;
+ }
++#endif /* __wasi__ */
+ 
+ static int redisSetBlocking(redisContext *c, int blocking) {
+ #ifndef _WIN32
+@@ -605,7 +608,7 @@ int redisContextConnectBindTcp(redisContext *c, const char *addr, int port,
+ }
+ 
+ int redisContextConnectUnix(redisContext *c, const char *path, const struct timeval *timeout) {
+-#ifndef _WIN32
++#if !defined(_WIN32) && !defined(__wasi__)
+     int blocking = (c->flags & REDIS_BLOCK);
+     struct sockaddr_un *sa;
+     long timeout_msec = -1;
+@@ -661,12 +664,17 @@ int redisContextConnectUnix(redisContext *c, const char *path, const struct time
+     c->flags |= REDIS_CONNECTED;
+     return REDIS_OK;
+ #else
+-    /* We currently do not support Unix sockets for Windows. */
++    /* We currently do not support Unix sockets for Windows or WASI. */
+     /* TODO(m): https://devblogs.microsoft.com/commandline/af_unix-comes-to-windows/ */
++    (void)c;
++    (void)path;
++    (void)timeout;
+     errno = EPROTONOSUPPORT;
+     return REDIS_ERR;
+ #endif /* _WIN32 */
++#if !defined(_WIN32) && !defined(__wasi__)
+ oom:
+     __redisSetError(c, REDIS_ERR_OOM, "Out of memory");
+     return REDIS_ERR;
++#endif
+ }
+diff --git a/deps/lua/src/lua b/deps/lua/src/lua
+new file mode 100755
+index 0000000..d902e1b
+Binary files /dev/null and b/deps/lua/src/lua differ
+diff --git a/deps/lua/src/luac b/deps/lua/src/luac
+new file mode 100755
+index 0000000..04d5a4f
+Binary files /dev/null and b/deps/lua/src/luac differ
+diff --git a/src/.make-prerequisites b/src/.make-prerequisites
+new file mode 100644
+index 0000000..e69de29
+diff --git a/src/.make-settings b/src/.make-settings
+new file mode 100644
+index 0000000..4183369
+--- /dev/null
++++ b/src/.make-settings
+@@ -0,0 +1,12 @@
++STD=-pedantic -DREDIS_STATIC= -Wno-c11-extensions -std=gnu11
++WARN=-Wall -W -Wno-missing-field-initializers -Werror=deprecated-declarations -Wstrict-prototypes
++OPT=-O3 -flto -fno-omit-frame-pointer
++MALLOC=libc
++BUILD_TLS=no
++USE_SYSTEMD=
++CFLAGS=-O2
++LDFLAGS=
++REDIS_CFLAGS=
++REDIS_LDFLAGS=
++PREV_FINAL_CFLAGS=-pedantic -DREDIS_STATIC= -Wno-c11-extensions -std=gnu11 -Wall -W -Wno-missing-field-initializers -Werror=deprecated-declarations -Wstrict-prototypes -O3 -flto -fno-omit-frame-pointer -g -ggdb -O2 -I../deps/hiredis -I../deps/linenoise -I../deps/lua/src -I../deps/hdr_histogram -I../deps/fpconv
++PREV_FINAL_LDFLAGS= -O3 -flto -fno-omit-frame-pointer -g -ggdb -rdynamic
+diff --git a/src/Makefile.dep b/src/Makefile.dep
+new file mode 100644
+index 0000000..3caa6b8
+--- /dev/null
++++ b/src/Makefile.dep
+@@ -0,0 +1,460 @@
++acl.o: acl.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h sha256.h
++adlist.o: adlist.c adlist.h zmalloc.h
++ae.o: ae.c ae.h monotonic.h fmacros.h anet.h redisassert.h config.h \
++ zmalloc.h ae_epoll.c
++anet.o: anet.c fmacros.h anet.h config.h util.h sds.h
++aof.o: aof.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h bio.h functions.h \
++ script.h
++bio.o: bio.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h bio.h
++bitops.o: bitops.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++blocked.o: blocked.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h slowlog.h
++call_reply.o: call_reply.c server.h fmacros.h config.h solarisfixes.h \
++ rio.h sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h call_reply.h \
++ resp_parser.h
++childinfo.o: childinfo.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++cli_commands.o: cli_commands.c cli_commands.h commands.h commands.def
++cli_common.o: cli_common.c fmacros.h cli_common.h \
++ ../deps/hiredis/hiredis.h ../deps/hiredis/read.h ../deps/hiredis/sds.h \
++ ../deps/hiredis/alloc.h ../deps/hiredis/sdscompat.h version.h \
++ ../deps/hiredis/sds.h
++cluster.o: cluster.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h cluster.h
++cluster_legacy.o: cluster_legacy.c server.h fmacros.h config.h \
++ solarisfixes.h rio.h sds.h connection.h ae.h monotonic.h atomicvar.h \
++ commands.h ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h \
++ ebuckets.h rax.h dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h \
++ version.h util.h latency.h sparkline.h quicklist.h redismodule.h \
++ zipmap.h ziplist.h sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h \
++ cluster.h cluster_legacy.h
++commands.o: commands.c commands.h server.h fmacros.h config.h \
++ solarisfixes.h rio.h sds.h connection.h ae.h monotonic.h atomicvar.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h commands.def
++config.o: config.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h cluster.h bio.h
++connection.o: connection.c server.h fmacros.h config.h solarisfixes.h \
++ rio.h sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++crc16.o: crc16.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++crc64.o: crc64.c crc64.h crcspeed.h
++crcspeed.o: crcspeed.c crcspeed.h
++db.o: db.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h cluster.h script.h \
++ functions.h bio.h
++debug.o: debug.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h bio.h \
++ ../deps/fpconv/fpconv_dtoa.h cluster.h threads_mngr.h script.h
++defrag.o: defrag.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++dict.o: dict.c fmacros.h dict.h mt19937-64.h zmalloc.h redisassert.h \
++ config.h monotonic.h
++ebuckets.o: ebuckets.c zmalloc.h redisassert.h config.h ebuckets.h rax.h
++endianconv.o: endianconv.c
++eval.o: eval.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h rand.h cluster.h \
++ resp_parser.h script_lua.h script.h ../deps/lua/src/lauxlib.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/lualib.h
++evict.o: evict.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h bio.h script.h
++expire.o: expire.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++function_lua.o: function_lua.c functions.h server.h fmacros.h config.h \
++ solarisfixes.h rio.h sds.h connection.h ae.h monotonic.h atomicvar.h \
++ commands.h ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h \
++ ebuckets.h rax.h dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h \
++ version.h util.h latency.h sparkline.h quicklist.h redismodule.h \
++ zipmap.h ziplist.h sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h \
++ script.h script_lua.h ../deps/lua/src/lauxlib.h ../deps/lua/src/lua.h \
++ ../deps/lua/src/lualib.h
++functions.o: functions.c functions.h server.h fmacros.h config.h \
++ solarisfixes.h rio.h sds.h connection.h ae.h monotonic.h atomicvar.h \
++ commands.h ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h \
++ ebuckets.h rax.h dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h \
++ version.h util.h latency.h sparkline.h quicklist.h redismodule.h \
++ zipmap.h ziplist.h sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h \
++ script.h
++geo.o: geo.c geo.h server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h geohash_helper.h \
++ geohash.h debugmacro.h pqsort.h
++geohash.o: geohash.c geohash.h
++geohash_helper.o: geohash_helper.c fmacros.h geohash_helper.h geohash.h \
++ debugmacro.h
++hyperloglog.o: hyperloglog.c server.h fmacros.h config.h solarisfixes.h \
++ rio.h sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++intset.o: intset.c intset.h zmalloc.h endianconv.h config.h redisassert.h
++kvstore.o: kvstore.c fmacros.h zmalloc.h kvstore.h dict.h mt19937-64.h \
++ adlist.h redisassert.h config.h monotonic.h
++latency.o: latency.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h \
++ ../deps/hdr_histogram/hdr_histogram.h
++lazyfree.o: lazyfree.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h bio.h functions.h \
++ script.h cluster.h
++listpack.o: listpack.c listpack.h listpack_malloc.h zmalloc.h \
++ redisassert.h config.h util.h sds.h
++localtime.o: localtime.c
++logreqres.o: logreqres.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++lolwut.o: lolwut.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h lolwut.h
++lolwut5.o: lolwut5.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h lolwut.h
++lolwut6.o: lolwut6.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h lolwut.h
++lzf_c.o: lzf_c.c lzfP.h
++lzf_d.o: lzf_d.c lzfP.h
++memtest.o: memtest.c config.h redisassert.h
++module.o: module.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h cluster.h \
++ slowlog.h script.h call_reply.h resp_parser.h \
++ ../deps/hdr_histogram/hdr_histogram.h crc16_slottable.h
++monotonic.o: monotonic.c monotonic.h fmacros.h redisassert.h config.h
++mstr.o: mstr.c sdsalloc.h zmalloc.h mstr.h
++mt19937-64.o: mt19937-64.c mt19937-64.h
++multi.o: multi.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++networking.o: networking.c server.h fmacros.h config.h solarisfixes.h \
++ rio.h sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h cluster.h script.h \
++ ../deps/fpconv/fpconv_dtoa.h fmtargs.h
++notify.o: notify.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++object.o: object.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h functions.h \
++ script.h intset.h
++pqsort.o: pqsort.c
++pubsub.o: pubsub.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h cluster.h
++quicklist.o: quicklist.c quicklist.h zmalloc.h config.h listpack.h util.h \
++ sds.h lzf.h redisassert.h
++rand.o: rand.c
++rax.o: rax.c rax.h redisassert.h config.h rax_malloc.h zmalloc.h
++rdb.o: rdb.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h lzf.h \
++ ../deps/fpconv/fpconv_dtoa.h functions.h script.h intset.h bio.h
++redis-benchmark.o: redis-benchmark.c fmacros.h \
++ ../deps/hiredis/sdscompat.h ../deps/hiredis/sds.h ae.h monotonic.h \
++ ../deps/hiredis/hiredis.h ../deps/hiredis/read.h ../deps/hiredis/sds.h \
++ ../deps/hiredis/alloc.h adlist.h dict.h mt19937-64.h zmalloc.h \
++ atomicvar.h config.h crc16_slottable.h \
++ ../deps/hdr_histogram/hdr_histogram.h cli_common.h
++redis-check-aof.o: redis-check-aof.c server.h fmacros.h config.h \
++ solarisfixes.h rio.h sds.h connection.h ae.h monotonic.h atomicvar.h \
++ commands.h ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h \
++ ebuckets.h rax.h dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h \
++ version.h util.h latency.h sparkline.h quicklist.h redismodule.h \
++ zipmap.h ziplist.h sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++redis-check-rdb.o: redis-check-rdb.c mt19937-64.h server.h fmacros.h \
++ config.h solarisfixes.h rio.h sds.h connection.h ae.h monotonic.h \
++ atomicvar.h commands.h ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h \
++ mstr.h ebuckets.h rax.h dict.h kvstore.h adlist.h zmalloc.h anet.h \
++ version.h util.h latency.h sparkline.h quicklist.h redismodule.h \
++ zipmap.h ziplist.h sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++redis-cli.o: redis-cli.c fmacros.h ../deps/hiredis/hiredis.h \
++ ../deps/hiredis/read.h ../deps/hiredis/sds.h ../deps/hiredis/alloc.h \
++ ../deps/hiredis/sdscompat.h ../deps/hiredis/sds.h dict.h mt19937-64.h \
++ adlist.h zmalloc.h ../deps/linenoise/linenoise.h anet.h ae.h monotonic.h \
++ connection.h cli_common.h cli_commands.h commands.h \
++ ../deps/hdr_histogram/hdr_histogram.h
++redisassert.o: redisassert.c
++release.o: release.c release.h version.h crc64.h
++replication.o: replication.c server.h fmacros.h config.h solarisfixes.h \
++ rio.h sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h cluster.h bio.h \
++ functions.h script.h
++resp_parser.o: resp_parser.c resp_parser.h server.h fmacros.h config.h \
++ solarisfixes.h rio.h sds.h connection.h ae.h monotonic.h atomicvar.h \
++ commands.h ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h \
++ ebuckets.h rax.h dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h \
++ version.h util.h latency.h sparkline.h quicklist.h redismodule.h \
++ zipmap.h ziplist.h sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++rio.o: rio.c fmacros.h ../deps/fpconv/fpconv_dtoa.h rio.h sds.h \
++ connection.h ae.h monotonic.h util.h crc64.h config.h server.h \
++ solarisfixes.h atomicvar.h commands.h ../deps/lua/src/lua.h \
++ ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h dict.h mt19937-64.h \
++ kvstore.h adlist.h zmalloc.h anet.h version.h latency.h sparkline.h \
++ quicklist.h redismodule.h zipmap.h ziplist.h sha1.h endianconv.h \
++ stream.h listpack.h rdb.h
++script.o: script.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h script.h cluster.h \
++ ../deps/lua/src/lauxlib.h ../deps/lua/src/lua.h
++script_lua.o: script_lua.c script_lua.h server.h fmacros.h config.h \
++ solarisfixes.h rio.h sds.h connection.h ae.h monotonic.h atomicvar.h \
++ commands.h ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h \
++ ebuckets.h rax.h dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h \
++ version.h util.h latency.h sparkline.h quicklist.h redismodule.h \
++ zipmap.h ziplist.h sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h \
++ script.h ../deps/lua/src/lauxlib.h ../deps/lua/src/lua.h \
++ ../deps/lua/src/lualib.h ../deps/fpconv/fpconv_dtoa.h rand.h cluster.h \
++ resp_parser.h
++sds.o: sds.c redisassert.h config.h sds.h sdsalloc.h zmalloc.h util.h
++sentinel.o: sentinel.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h \
++ ../deps/hiredis/hiredis.h ../deps/hiredis/read.h ../deps/hiredis/sds.h \
++ ../deps/hiredis/alloc.h ../deps/hiredis/async.h \
++ ../deps/hiredis/hiredis.h
++server.o: server.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h cluster.h \
++ slowlog.h bio.h functions.h script.h \
++ ../deps/hdr_histogram/hdr_histogram.h syscheck.h threads_mngr.h \
++ fmtargs.h asciilogo.h
++setcpuaffinity.o: setcpuaffinity.c config.h
++setproctitle.o: setproctitle.c
++sha1.o: sha1.c solarisfixes.h sha1.h config.h
++sha256.o: sha256.c sha256.h
++siphash.o: siphash.c
++slowlog.o: slowlog.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h slowlog.h
++socket.o: socket.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h connhelpers.h
++sort.o: sort.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h pqsort.h cluster.h
++sparkline.o: sparkline.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++strl.o: strl.c
++syncio.o: syncio.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++syscheck.o: syscheck.c fmacros.h config.h syscheck.h sds.h anet.h
++t_hash.o: t_hash.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++t_list.o: t_list.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++t_set.o: t_set.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h intset.h
++t_stream.o: t_stream.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++t_string.o: t_string.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++t_zset.o: t_zset.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h intset.h
++threads_mngr.o: threads_mngr.c threads_mngr.h fmacros.h atomicvar.h \
++ config.h server.h solarisfixes.h rio.h sds.h connection.h ae.h \
++ monotonic.h commands.h ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h \
++ mstr.h ebuckets.h rax.h dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h \
++ anet.h version.h util.h latency.h sparkline.h quicklist.h redismodule.h \
++ zipmap.h ziplist.h sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++timeout.o: timeout.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h cluster.h
++tls.o: tls.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h connhelpers.h
++tracking.o: tracking.c server.h fmacros.h config.h solarisfixes.h rio.h \
++ sds.h connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++unix.o: unix.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
++util.o: util.c fmacros.h ../deps/fpconv/fpconv_dtoa.h util.h sds.h \
++ sha256.h config.h
++ziplist.o: ziplist.c zmalloc.h util.h sds.h ziplist.h config.h \
++ endianconv.h redisassert.h
++zipmap.o: zipmap.c zmalloc.h endianconv.h config.h
++zmalloc.o: zmalloc.c fmacros.h config.h solarisfixes.h zmalloc.h \
++ atomicvar.h
+diff --git a/src/adlist.d b/src/adlist.d
+new file mode 100644
+index 0000000..c4bea66
+--- /dev/null
++++ b/src/adlist.d
+@@ -0,0 +1 @@
++adlist.o: adlist.c adlist.h zmalloc.h
+diff --git a/src/ae.d b/src/ae.d
+new file mode 100644
+index 0000000..bb760cf
+--- /dev/null
++++ b/src/ae.d
+@@ -0,0 +1,2 @@
++ae.o: ae.c ae.h monotonic.h fmacros.h anet.h redisassert.h config.h \
++ zmalloc.h ae_epoll.c
+diff --git a/src/anet.c b/src/anet.c
+index 4d893a1..38d2ff2 100644
+--- a/src/anet.c
++++ b/src/anet.c
+@@ -471,6 +471,9 @@ int anetTcpNonBlockBestEffortBindConnect(char *err, const char *addr, int port,
+             ANET_CONNECT_NONBLOCK|ANET_CONNECT_BE_BINDING);
+ }
+ 
++#ifndef __wasi__
++/* WASI: no AF_UNIX support in wasi:sockets. Unix-domain sockets are
++ * compiled out; callers must not reference these functions on WASI. */
+ int anetUnixGenericConnect(char *err, const char *path, int flags)
+ {
+     int s;
+@@ -498,6 +501,7 @@ int anetUnixGenericConnect(char *err, const char *path, int flags)
+     }
+     return s;
+ }
++#endif /* __wasi__ */
+ 
+ static int anetListen(char *err, int s, struct sockaddr *sa, socklen_t len, int backlog, mode_t perm) {
+     if (bind(s,sa,len) == -1) {
+@@ -506,8 +510,10 @@ static int anetListen(char *err, int s, struct sockaddr *sa, socklen_t len, int
+         return ANET_ERR;
+     }
+ 
++#ifndef __wasi__
+     if (sa->sa_family == AF_LOCAL && perm)
+         chmod(((struct sockaddr_un *) sa)->sun_path, perm);
++#endif
+ 
+     if (listen(s, backlog) == -1) {
+         anetSetError(err, "listen: %s", strerror(errno));
+@@ -578,6 +584,8 @@ int anetTcp6Server(char *err, int port, char *bindaddr, int backlog)
+     return _anetTcpServer(err, port, bindaddr, AF_INET6, backlog);
+ }
+ 
++#ifndef __wasi__
++/* WASI: no AF_UNIX support in wasi:sockets (see anetUnixGenericConnect). */
+ int anetUnixServer(char *err, char *path, mode_t perm, int backlog)
+ {
+     int s;
+@@ -597,6 +605,7 @@ int anetUnixServer(char *err, char *path, mode_t perm, int backlog)
+         return ANET_ERR;
+     return s;
+ }
++#endif /* __wasi__ */
+ 
+ /* Accept a connection and also make sure the socket is non-blocking, and CLOEXEC.
+  * returns the new socket FD, or -1 on error. */
+diff --git a/src/anet.d b/src/anet.d
+new file mode 100644
+index 0000000..39a698b
+--- /dev/null
++++ b/src/anet.d
+@@ -0,0 +1 @@
++anet.o: anet.c fmacros.h anet.h config.h util.h sds.h
+diff --git a/src/aof.c b/src/aof.c
+index d63a91f..beffe3d 100644
+--- a/src/aof.c
++++ b/src/aof.c
+@@ -913,6 +913,7 @@ void aof_background_fsync_and_close(int fd) {
+ 
+ /* Kills an AOFRW child process if exists */
+ void killAppendOnlyChild(void) {
++#ifndef __wasi__
+     int statloc;
+     /* No AOFRW child? return. */
+     if (server.child_type != CHILD_TYPE_AOF) return;
+@@ -925,6 +926,7 @@ void killAppendOnlyChild(void) {
+     aofRemoveTempFile(server.child_pid);
+     resetChildState();
+     server.aof_rewrite_time_start = -1;
++#endif /* __wasi__: no child processes possible */
+ }
+ 
+ /* Called when the user switches from "appendonly yes" to "appendonly no"
+@@ -973,11 +975,110 @@ int startAppendOnly(void) {
+             killAppendOnlyChild();
+         }
+ 
++#ifdef __wasi__
++        /* WASI: 无 fork，无法后台重写。改为同步执行初始 AOF 重写：
++         * 进程内生成 base 文件（含现有全部数据）并接管 temp incr，
++         * 与 rewriteAppendOnlyFileBackground + backgroundRewriteDoneHandler
++         * 成功路径的效果一致，只是全程阻塞主线程。 */
++        serverLog(LL_NOTICE,
++            "WASI build: rewriting AOF synchronously to enable it (no fork available).");
++        if (dirCreateIfMissing(server.aof_dirname) == -1) {
++            server.aof_state = AOF_OFF;
++            serverLog(LL_WARNING, "Can't open or create append-only dir %s: %s",
++                server.aof_dirname, strerror(errno));
++            return C_ERR;
++        }
++        server.aof_selected_db = -1;
++        /* AOF_WAIT_REWRITE 状态下打开 temp incr（承接重写期间的写入缓冲） */
++        if (openNewIncrAofForAppend() != C_OK) {
++            server.aof_state = AOF_OFF;
++            return C_ERR;
++        }
++        {
++            char tmpfile[256];
++            snprintf(tmpfile, sizeof(tmpfile), "temp-rewriteaof-sync.aof");
++            if (rewriteAppendOnlyFile(tmpfile) != C_OK) {
++                serverLog(LL_WARNING,
++                    "Synchronous AOF rewrite failed, unable to enable AOF.");
++                server.aof_state = AOF_OFF;
++                aofDelTempIncrAofFile();
++                return C_ERR;
++            }
++            /* 接管产物（等价于 backgroundRewriteDoneHandler 的成功路径） */
++            aofManifest *temp_am = aofManifestDup(server.aof_manifest);
++            sds new_base_filename = getNewBaseFileNameAndMarkPreAsHistory(temp_am);
++            sds new_base_filepath = makePath(server.aof_dirname, new_base_filename);
++            if (rename(tmpfile, new_base_filepath) == -1) {
++                serverLog(LL_WARNING,
++                    "Error renaming the temporary AOF base file %s into %s: %s",
++                    tmpfile, new_base_filepath, strerror(errno));
++                aofManifestFree(temp_am);
++                sdsfree(new_base_filename);
++                sdsfree(new_base_filepath);
++                server.aof_state = AOF_OFF;
++                aofDelTempIncrAofFile();
++                return C_ERR;
++            }
++            sds temp_incr_aof_name = getTempIncrAofName();
++            sds temp_incr_filepath = makePath(server.aof_dirname, temp_incr_aof_name);
++            sds new_incr_filename = getNewIncrAofName(temp_am);
++            sds new_incr_filepath = makePath(server.aof_dirname, new_incr_filename);
++            if (rename(temp_incr_filepath, new_incr_filepath) == -1) {
++                serverLog(LL_WARNING,
++                    "Error renaming the temporary AOF incr file %s into %s: %s",
++                    temp_incr_filepath, new_incr_filepath, strerror(errno));
++                bg_unlink(new_base_filepath);
++                aofManifestFree(temp_am);
++                sdsfree(new_base_filename);
++                sdsfree(new_base_filepath);
++                sdsfree(temp_incr_aof_name);
++                sdsfree(temp_incr_filepath);
++                sdsfree(new_incr_filename);
++                sdsfree(new_incr_filepath);
++                server.aof_state = AOF_OFF;
++                aofDelTempIncrAofFile();
++                return C_ERR;
++            }
++            sdsfree(temp_incr_aof_name);
++            sdsfree(temp_incr_filepath);
++            markRewrittenIncrAofAsHistory(temp_am);
++            if (persistAofManifest(temp_am) == C_ERR) {
++                bg_unlink(new_base_filepath);
++                bg_unlink(new_incr_filepath);
++                aofManifestFree(temp_am);
++                sdsfree(new_base_filename);
++                sdsfree(new_base_filepath);
++                sdsfree(new_incr_filename);
++                sdsfree(new_incr_filepath);
++                server.aof_state = AOF_OFF;
++                aofDelTempIncrAofFile();
++                return C_ERR;
++            }
++            aofManifestFreeAndUpdate(temp_am);
++            server.aof_current_size = getAppendOnlyFileSize(new_base_filename, NULL) + server.aof_last_incr_size;
++            server.aof_rewrite_base_size = server.aof_current_size;
++            sdsfree(new_base_filename);
++            sdsfree(new_base_filepath);
++            sdsfree(new_incr_filename);
++            sdsfree(new_incr_filepath);
++            aofDelHistoryFiles();
++            server.aof_lastbgrewrite_status = C_OK;
++            server.stat_aofrw_consecutive_failures = 0;
++            server.aof_state = AOF_ON;
++            long long fsynced_reploff_pending;
++            atomicGet(server.fsynced_reploff_pending, fsynced_reploff_pending);
++            server.fsynced_reploff = fsynced_reploff_pending;
++            sdsfree(server.aof_buf);
++            server.aof_buf = sdsempty();
++            serverLog(LL_NOTICE, "Synchronous AOF rewrite finished successfully");
++        }
++#else
+         if (rewriteAppendOnlyFileBackground() == C_ERR) {
+             server.aof_state = AOF_OFF;
+             serverLog(LL_WARNING,"Redis needs to enable the AOF but can't trigger a background AOF rewrite operation. Check the above logs for more info about the error.");
+             return C_ERR;
+         }
++#endif
+     }
+     server.aof_last_fsync = server.mstime;
+     /* If AOF fsync error in bio job, we just ignore it and log the event. */
+diff --git a/src/bio.c b/src/bio.c
+index 6f96ef7..d53b891 100644
+--- a/src/bio.c
++++ b/src/bio.c
+@@ -115,6 +115,7 @@ typedef union bio_job {
+ 
+ void *bioProcessBackgroundJobs(void *arg);
+ void bioPipeReadJobCompList(aeEventLoop *el, int fd, void *privdata, int mask);
++static void bioProcessJob(bio_job *job);
+ 
+ /* Make sure we have enough stack to perform all the things we do in the
+  * main thread. */
+@@ -143,6 +144,7 @@ void bioInit(void) {
+      * and we do not want to block not in the read nor in the write half.
+      * Enable close-on-exec flag on pipes in case of the fork-exec system calls in
+      * sentinels or redis servers. */
++#ifndef __wasi__
+     if (anetPipe(job_comp_pipe, O_CLOEXEC|O_NONBLOCK, O_CLOEXEC|O_NONBLOCK) == -1) {
+         serverLog(LL_WARNING,
+                   "Can't create the pipe for bio thread: %s", strerror(errno));
+@@ -154,6 +156,10 @@ void bioInit(void) {
+                           bioPipeReadJobCompList, NULL) == AE_ERR) {
+         serverPanic("Error registering the readable event for the bio pipe.");
+     }
++#else
++    /* WASI: 无 pipe。comp 任务仅模块使用（模块不支持），fd 置 -1 让写端静默失败。 */
++    job_comp_pipe[0] = job_comp_pipe[1] = -1;
++#endif
+ 
+     /* Set the stack size as by default it may be small in some system */
+     pthread_attr_init(&attr);
+@@ -165,6 +171,7 @@ void bioInit(void) {
+     /* Ready to spawn our threads. We use the single argument the thread
+      * function accepts in order to pass the job ID the thread is
+      * responsible for. */
++#ifndef __wasi__
+     for (j = 0; j < BIO_WORKER_NUM; j++) {
+         void *arg = (void*)(unsigned long) j;
+         if (pthread_create(&thread,&attr,bioProcessBackgroundJobs,arg) != 0) {
+@@ -173,16 +180,27 @@ void bioInit(void) {
+         }
+         bio_threads[j] = thread;
+     }
++#else
++    /* WASI: no threads. Jobs are executed inline in bioSubmitJob(). */
++    serverLog(LL_NOTICE, "WASI build: background jobs run inline (no worker threads).");
++#endif
+ }
+ 
+ void bioSubmitJob(int type, bio_job *job) {
+     job->header.type = type;
++#ifdef __wasi__
++    /* WASI: single-threaded build, execute the job inline instead of
++     * queueing it for a worker thread. */
++    bioProcessJob(job);
++    zfree(job);
++#else
+     unsigned long worker = bio_job_to_worker[type];
+     pthread_mutex_lock(&bio_mutex[worker]);
+     listAddNodeTail(bio_jobs[worker],job);
+     bio_jobs_counter[type]++;
+     pthread_cond_signal(&bio_newjob_cond[worker]);
+     pthread_mutex_unlock(&bio_mutex[worker]);
++#endif
+ }
+ 
+ void bioCreateLazyFreeJob(lazy_free_fn free_fn, int arg_count, ...) {
+@@ -250,6 +268,73 @@ void bioCreateFsyncJob(int fd, long long offset, int need_reclaim_cache) {
+     bioSubmitJob(BIO_AOF_FSYNC, job);
+ }
+ 
++/* Process a single background job. Extracted from the worker thread loop so
++ * that the single-threaded WASI build can also run jobs inline. */
++static void bioProcessJob(bio_job *job) {
++    int job_type = job->header.type;
++
++    if (job_type == BIO_CLOSE_FILE) {
++        if (job->fd_args.need_fsync &&
++            redis_fsync(job->fd_args.fd) == -1 &&
++            errno != EBADF && errno != EINVAL)
++        {
++            serverLog(LL_WARNING, "Fail to fsync the AOF file: %s",strerror(errno));
++        }
++        if (job->fd_args.need_reclaim_cache) {
++            if (reclaimFilePageCache(job->fd_args.fd, 0, 0) == -1) {
++                serverLog(LL_NOTICE,"Unable to reclaim page cache: %s", strerror(errno));
++            }
++        }
++        close(job->fd_args.fd);
++    } else if (job_type == BIO_AOF_FSYNC || job_type == BIO_CLOSE_AOF) {
++        /* The fd may be closed by main thread and reused for another
++         * socket, pipe, or file. We just ignore these errno because
++         * aof fsync did not really fail. */
++        if (redis_fsync(job->fd_args.fd) == -1 &&
++            errno != EBADF && errno != EINVAL)
++        {
++            int last_status;
++            atomicGet(server.aof_bio_fsync_status,last_status);
++            atomicSet(server.aof_bio_fsync_status,C_ERR);
++            atomicSet(server.aof_bio_fsync_errno,errno);
++            if (last_status == C_OK) {
++                serverLog(LL_WARNING,
++                    "Fail to fsync the AOF file: %s",strerror(errno));
++            }
++        } else {
++            atomicSet(server.aof_bio_fsync_status,C_OK);
++            atomicSet(server.fsynced_reploff_pending, job->fd_args.offset);
++        }
++
++        if (job->fd_args.need_reclaim_cache) {
++            if (reclaimFilePageCache(job->fd_args.fd, 0, 0) == -1) {
++                serverLog(LL_NOTICE,"Unable to reclaim page cache: %s", strerror(errno));
++            }
++        }
++        if (job_type == BIO_CLOSE_AOF)
++            close(job->fd_args.fd);
++    } else if (job_type == BIO_LAZY_FREE) {
++        job->free_args.free_fn(job->free_args.free_args);
++    } else if ((job_type == BIO_COMP_RQ_CLOSE_FILE) ||
++               (job_type == BIO_COMP_RQ_AOF_FSYNC) ||
++               (job_type == BIO_COMP_RQ_LAZY_FREE)) {
++        bio_comp_item *comp_rsp = zmalloc(sizeof(bio_comp_item));
++        comp_rsp->func = job->comp_rq.fn;
++        comp_rsp->arg = job->comp_rq.arg;
++
++        /* just write it to completion job responses */
++        pthread_mutex_lock(&bio_mutex_comp);
++        listAddNodeTail(bio_comp_list, comp_rsp);
++        pthread_mutex_unlock(&bio_mutex_comp);
++
++        if (write(job_comp_pipe[1],"A",1) != 1) {
++            /* Pipe is non-blocking, write() may fail if it's full. */
++        }
++    } else {
++        serverPanic("Wrong job type in bioProcessJob().");
++    }
++}
++
+ void *bioProcessBackgroundJobs(void *arg) {
+     bio_job *job;
+     unsigned long worker = (unsigned long) arg;
+@@ -290,67 +375,7 @@ void *bioProcessBackgroundJobs(void *arg) {
+ 
+         /* Process the job accordingly to its type. */
+         int job_type = job->header.type;
+-
+-        if (job_type == BIO_CLOSE_FILE) {
+-            if (job->fd_args.need_fsync &&
+-                redis_fsync(job->fd_args.fd) == -1 &&
+-                errno != EBADF && errno != EINVAL)
+-            {
+-                serverLog(LL_WARNING, "Fail to fsync the AOF file: %s",strerror(errno));
+-            }
+-            if (job->fd_args.need_reclaim_cache) {
+-                if (reclaimFilePageCache(job->fd_args.fd, 0, 0) == -1) {
+-                    serverLog(LL_NOTICE,"Unable to reclaim page cache: %s", strerror(errno));
+-                }
+-            }
+-            close(job->fd_args.fd);
+-        } else if (job_type == BIO_AOF_FSYNC || job_type == BIO_CLOSE_AOF) {
+-            /* The fd may be closed by main thread and reused for another
+-             * socket, pipe, or file. We just ignore these errno because
+-             * aof fsync did not really fail. */
+-            if (redis_fsync(job->fd_args.fd) == -1 &&
+-                errno != EBADF && errno != EINVAL)
+-            {
+-                int last_status;
+-                atomicGet(server.aof_bio_fsync_status,last_status);
+-                atomicSet(server.aof_bio_fsync_status,C_ERR);
+-                atomicSet(server.aof_bio_fsync_errno,errno);
+-                if (last_status == C_OK) {
+-                    serverLog(LL_WARNING,
+-                        "Fail to fsync the AOF file: %s",strerror(errno));
+-                }
+-            } else {
+-                atomicSet(server.aof_bio_fsync_status,C_OK);
+-                atomicSet(server.fsynced_reploff_pending, job->fd_args.offset);
+-            }
+-
+-            if (job->fd_args.need_reclaim_cache) {
+-                if (reclaimFilePageCache(job->fd_args.fd, 0, 0) == -1) {
+-                    serverLog(LL_NOTICE,"Unable to reclaim page cache: %s", strerror(errno));
+-                }
+-            }
+-            if (job_type == BIO_CLOSE_AOF)
+-                close(job->fd_args.fd);
+-        } else if (job_type == BIO_LAZY_FREE) {
+-            job->free_args.free_fn(job->free_args.free_args);
+-        } else if ((job_type == BIO_COMP_RQ_CLOSE_FILE) ||
+-                   (job_type == BIO_COMP_RQ_AOF_FSYNC) ||
+-                   (job_type == BIO_COMP_RQ_LAZY_FREE)) {
+-            bio_comp_item *comp_rsp = zmalloc(sizeof(bio_comp_item));
+-            comp_rsp->func = job->comp_rq.fn;
+-            comp_rsp->arg = job->comp_rq.arg;
+-
+-            /* just write it to completion job responses */
+-            pthread_mutex_lock(&bio_mutex_comp);
+-            listAddNodeTail(bio_comp_list, comp_rsp);
+-            pthread_mutex_unlock(&bio_mutex_comp);
+-
+-            if (write(job_comp_pipe[1],"A",1) != 1) {
+-                /* Pipe is non-blocking, write() may fail if it's full. */
+-            }
+-        } else {
+-            serverPanic("Wrong job type in bioProcessBackgroundJobs().");
+-        }
++        bioProcessJob(job);
+         zfree(job);
+ 
+         /* Lock again before reiterating the loop, if there are no longer
+@@ -389,6 +414,7 @@ void bioDrainWorker(int job_type) {
+  * Currently Redis does this only on crash (for instance on SIGSEGV) in order
+  * to perform a fast memory check without other threads messing with memory. */
+ void bioKillThreads(void) {
++#ifndef __wasi__
+     int err;
+     unsigned long j;
+ 
+@@ -405,6 +431,7 @@ void bioKillThreads(void) {
+             }
+         }
+     }
++#endif
+ }
+ 
+ void bioPipeReadJobCompList(aeEventLoop *el, int fd, void *privdata, int mask) {
+diff --git a/src/cli_commands.d b/src/cli_commands.d
+new file mode 100644
+index 0000000..c742b62
+--- /dev/null
++++ b/src/cli_commands.d
+@@ -0,0 +1 @@
++cli_commands.o: cli_commands.c cli_commands.h commands.h commands.def
+diff --git a/src/cli_common.d b/src/cli_common.d
+new file mode 100644
+index 0000000..138769d
+--- /dev/null
++++ b/src/cli_common.d
+@@ -0,0 +1,4 @@
++cli_common.o: cli_common.c fmacros.h cli_common.h \
++ ../deps/hiredis/hiredis.h ../deps/hiredis/read.h ../deps/hiredis/sds.h \
++ ../deps/hiredis/alloc.h ../deps/hiredis/sdscompat.h version.h \
++ ../deps/hiredis/sds.h
+diff --git a/src/commands.def b/src/commands.def
+index 4e8ab3c..be913f6 100644
+--- a/src/commands.def
++++ b/src/commands.def
+@@ -5462,15 +5462,6 @@ const char *FUNCTION_STATS_Tips[] = {
+ 
+ /* FUNCTION command table */
+ struct COMMAND_STRUCT FUNCTION_Subcommands[] = {
+-{MAKE_CMD("delete","Deletes a library and its functions.","O(1)","7.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,FUNCTION_DELETE_History,0,FUNCTION_DELETE_Tips,2,functionDeleteCommand,3,CMD_NOSCRIPT|CMD_WRITE,ACL_CATEGORY_SCRIPTING,FUNCTION_DELETE_Keyspecs,0,NULL,1),.args=FUNCTION_DELETE_Args},
+-{MAKE_CMD("dump","Dumps all libraries into a serialized binary payload.","O(N) where N is the number of functions","7.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,FUNCTION_DUMP_History,0,FUNCTION_DUMP_Tips,0,functionDumpCommand,2,CMD_NOSCRIPT,ACL_CATEGORY_SCRIPTING,FUNCTION_DUMP_Keyspecs,0,NULL,0)},
+-{MAKE_CMD("flush","Deletes all libraries and functions.","O(N) where N is the number of functions deleted","7.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,FUNCTION_FLUSH_History,0,FUNCTION_FLUSH_Tips,2,functionFlushCommand,-2,CMD_NOSCRIPT|CMD_WRITE,ACL_CATEGORY_SCRIPTING,FUNCTION_FLUSH_Keyspecs,0,NULL,1),.args=FUNCTION_FLUSH_Args},
+-{MAKE_CMD("help","Returns helpful text about the different subcommands.","O(1)","7.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,FUNCTION_HELP_History,0,FUNCTION_HELP_Tips,0,functionHelpCommand,2,CMD_LOADING|CMD_STALE,ACL_CATEGORY_SCRIPTING,FUNCTION_HELP_Keyspecs,0,NULL,0)},
+-{MAKE_CMD("kill","Terminates a function during execution.","O(1)","7.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,FUNCTION_KILL_History,0,FUNCTION_KILL_Tips,2,functionKillCommand,2,CMD_NOSCRIPT|CMD_ALLOW_BUSY,ACL_CATEGORY_SCRIPTING,FUNCTION_KILL_Keyspecs,0,NULL,0)},
+-{MAKE_CMD("list","Returns information about all libraries.","O(N) where N is the number of functions","7.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,FUNCTION_LIST_History,0,FUNCTION_LIST_Tips,1,functionListCommand,-2,CMD_NOSCRIPT,ACL_CATEGORY_SCRIPTING,FUNCTION_LIST_Keyspecs,0,NULL,2),.args=FUNCTION_LIST_Args},
+-{MAKE_CMD("load","Creates a library.","O(1) (considering compilation time is redundant)","7.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,FUNCTION_LOAD_History,0,FUNCTION_LOAD_Tips,2,functionLoadCommand,-3,CMD_NOSCRIPT|CMD_WRITE|CMD_DENYOOM,ACL_CATEGORY_SCRIPTING,FUNCTION_LOAD_Keyspecs,0,NULL,2),.args=FUNCTION_LOAD_Args},
+-{MAKE_CMD("restore","Restores all libraries from a payload.","O(N) where N is the number of functions on the payload","7.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,FUNCTION_RESTORE_History,0,FUNCTION_RESTORE_Tips,2,functionRestoreCommand,-3,CMD_NOSCRIPT|CMD_WRITE|CMD_DENYOOM,ACL_CATEGORY_SCRIPTING,FUNCTION_RESTORE_Keyspecs,0,NULL,2),.args=FUNCTION_RESTORE_Args},
+-{MAKE_CMD("stats","Returns information about a function during execution.","O(1)","7.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,FUNCTION_STATS_History,0,FUNCTION_STATS_Tips,3,functionStatsCommand,2,CMD_NOSCRIPT|CMD_ALLOW_BUSY,ACL_CATEGORY_SCRIPTING,FUNCTION_STATS_Keyspecs,0,NULL,0)},
+ {0}
+ };
+ 
+@@ -5642,12 +5633,6 @@ struct COMMAND_ARG SCRIPT_LOAD_Args[] = {
+ 
+ /* SCRIPT command table */
+ struct COMMAND_STRUCT SCRIPT_Subcommands[] = {
+-{MAKE_CMD("debug","Sets the debug mode of server-side Lua scripts.","O(1)","3.2.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,SCRIPT_DEBUG_History,0,SCRIPT_DEBUG_Tips,0,scriptCommand,3,CMD_NOSCRIPT,ACL_CATEGORY_SCRIPTING,SCRIPT_DEBUG_Keyspecs,0,NULL,1),.args=SCRIPT_DEBUG_Args},
+-{MAKE_CMD("exists","Determines whether server-side Lua scripts exist in the script cache.","O(N) with N being the number of scripts to check (so checking a single script is an O(1) operation).","2.6.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,SCRIPT_EXISTS_History,0,SCRIPT_EXISTS_Tips,2,scriptCommand,-3,CMD_NOSCRIPT,ACL_CATEGORY_SCRIPTING,SCRIPT_EXISTS_Keyspecs,0,NULL,1),.args=SCRIPT_EXISTS_Args},
+-{MAKE_CMD("flush","Removes all server-side Lua scripts from the script cache.","O(N) with N being the number of scripts in cache","2.6.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,SCRIPT_FLUSH_History,1,SCRIPT_FLUSH_Tips,2,scriptCommand,-2,CMD_NOSCRIPT,ACL_CATEGORY_SCRIPTING,SCRIPT_FLUSH_Keyspecs,0,NULL,1),.args=SCRIPT_FLUSH_Args},
+-{MAKE_CMD("help","Returns helpful text about the different subcommands.","O(1)","5.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,SCRIPT_HELP_History,0,SCRIPT_HELP_Tips,0,scriptCommand,2,CMD_LOADING|CMD_STALE,ACL_CATEGORY_SCRIPTING,SCRIPT_HELP_Keyspecs,0,NULL,0)},
+-{MAKE_CMD("kill","Terminates a server-side Lua script during execution.","O(1)","2.6.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,SCRIPT_KILL_History,0,SCRIPT_KILL_Tips,2,scriptCommand,2,CMD_NOSCRIPT|CMD_ALLOW_BUSY,ACL_CATEGORY_SCRIPTING,SCRIPT_KILL_Keyspecs,0,NULL,0)},
+-{MAKE_CMD("load","Loads a server-side Lua script to the script cache.","O(N) with N being the length in bytes of the script body.","2.6.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,SCRIPT_LOAD_History,0,SCRIPT_LOAD_Tips,2,scriptCommand,3,CMD_NOSCRIPT|CMD_STALE,ACL_CATEGORY_SCRIPTING,SCRIPT_LOAD_Keyspecs,0,NULL,1),.args=SCRIPT_LOAD_Args},
+ {0}
+ };
+ 
+@@ -11092,12 +11077,6 @@ struct COMMAND_STRUCT redisCommandTable[] = {
+ {MAKE_CMD("sunsubscribe","Stops listening to messages posted to shard channels.","O(N) where N is the number of shard channels to unsubscribe.","7.0.0",CMD_DOC_NONE,NULL,NULL,"pubsub",COMMAND_GROUP_PUBSUB,SUNSUBSCRIBE_History,0,SUNSUBSCRIBE_Tips,0,sunsubscribeCommand,-1,CMD_PUBSUB|CMD_NOSCRIPT|CMD_LOADING|CMD_STALE,0,SUNSUBSCRIBE_Keyspecs,1,NULL,1),.args=SUNSUBSCRIBE_Args},
+ {MAKE_CMD("unsubscribe","Stops listening to messages posted to channels.","O(N) where N is the number of channels to unsubscribe.","2.0.0",CMD_DOC_NONE,NULL,NULL,"pubsub",COMMAND_GROUP_PUBSUB,UNSUBSCRIBE_History,0,UNSUBSCRIBE_Tips,0,unsubscribeCommand,-1,CMD_PUBSUB|CMD_NOSCRIPT|CMD_LOADING|CMD_STALE|CMD_SENTINEL,0,UNSUBSCRIBE_Keyspecs,0,NULL,1),.args=UNSUBSCRIBE_Args},
+ /* scripting */
+-{MAKE_CMD("eval","Executes a server-side Lua script.","Depends on the script that is executed.","2.6.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,EVAL_History,0,EVAL_Tips,0,evalCommand,-3,CMD_NOSCRIPT|CMD_SKIP_MONITOR|CMD_MAY_REPLICATE|CMD_NO_MANDATORY_KEYS|CMD_STALE,ACL_CATEGORY_SCRIPTING,EVAL_Keyspecs,1,evalGetKeys,4),.args=EVAL_Args},
+-{MAKE_CMD("evalsha","Executes a server-side Lua script by SHA1 digest.","Depends on the script that is executed.","2.6.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,EVALSHA_History,0,EVALSHA_Tips,0,evalShaCommand,-3,CMD_NOSCRIPT|CMD_SKIP_MONITOR|CMD_MAY_REPLICATE|CMD_NO_MANDATORY_KEYS|CMD_STALE,ACL_CATEGORY_SCRIPTING,EVALSHA_Keyspecs,1,evalGetKeys,4),.args=EVALSHA_Args},
+-{MAKE_CMD("evalsha_ro","Executes a read-only server-side Lua script by SHA1 digest.","Depends on the script that is executed.","7.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,EVALSHA_RO_History,0,EVALSHA_RO_Tips,0,evalShaRoCommand,-3,CMD_NOSCRIPT|CMD_SKIP_MONITOR|CMD_NO_MANDATORY_KEYS|CMD_STALE|CMD_READONLY,ACL_CATEGORY_SCRIPTING,EVALSHA_RO_Keyspecs,1,evalGetKeys,4),.args=EVALSHA_RO_Args},
+-{MAKE_CMD("eval_ro","Executes a read-only server-side Lua script.","Depends on the script that is executed.","7.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,EVAL_RO_History,0,EVAL_RO_Tips,0,evalRoCommand,-3,CMD_NOSCRIPT|CMD_SKIP_MONITOR|CMD_NO_MANDATORY_KEYS|CMD_STALE|CMD_READONLY,ACL_CATEGORY_SCRIPTING,EVAL_RO_Keyspecs,1,evalGetKeys,4),.args=EVAL_RO_Args},
+-{MAKE_CMD("fcall","Invokes a function.","Depends on the function that is executed.","7.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,FCALL_History,0,FCALL_Tips,0,fcallCommand,-3,CMD_NOSCRIPT|CMD_SKIP_MONITOR|CMD_MAY_REPLICATE|CMD_NO_MANDATORY_KEYS|CMD_STALE,ACL_CATEGORY_SCRIPTING,FCALL_Keyspecs,1,functionGetKeys,4),.args=FCALL_Args},
+-{MAKE_CMD("fcall_ro","Invokes a read-only function.","Depends on the function that is executed.","7.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,FCALL_RO_History,0,FCALL_RO_Tips,0,fcallroCommand,-3,CMD_NOSCRIPT|CMD_SKIP_MONITOR|CMD_NO_MANDATORY_KEYS|CMD_STALE|CMD_READONLY,ACL_CATEGORY_SCRIPTING,FCALL_RO_Keyspecs,1,functionGetKeys,4),.args=FCALL_RO_Args},
+ {MAKE_CMD("function","A container for function commands.","Depends on subcommand.","7.0.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,FUNCTION_History,0,FUNCTION_Tips,0,NULL,-2,0,0,FUNCTION_Keyspecs,0,NULL,0),.subcommands=FUNCTION_Subcommands},
+ {MAKE_CMD("script","A container for Lua scripts management commands.","Depends on subcommand.","2.6.0",CMD_DOC_NONE,NULL,NULL,"scripting",COMMAND_GROUP_SCRIPTING,SCRIPT_History,0,SCRIPT_Tips,0,NULL,-2,0,0,SCRIPT_Keyspecs,0,NULL,0),.subcommands=SCRIPT_Subcommands},
+ /* sentinel */
+diff --git a/src/crc16.d b/src/crc16.d
+new file mode 100644
+index 0000000..a97f212
+--- /dev/null
++++ b/src/crc16.d
+@@ -0,0 +1,6 @@
++crc16.o: crc16.c server.h fmacros.h config.h solarisfixes.h rio.h sds.h \
++ connection.h ae.h monotonic.h atomicvar.h commands.h \
++ ../deps/lua/src/lua.h ../deps/lua/src/luaconf.h mstr.h ebuckets.h rax.h \
++ dict.h mt19937-64.h kvstore.h adlist.h zmalloc.h anet.h version.h util.h \
++ latency.h sparkline.h quicklist.h redismodule.h zipmap.h ziplist.h \
++ sha1.h endianconv.h crc64.h stream.h listpack.h rdb.h
+diff --git a/src/crc64.d b/src/crc64.d
+new file mode 100644
+index 0000000..a2c2ebc
+--- /dev/null
++++ b/src/crc64.d
+@@ -0,0 +1 @@
++crc64.o: crc64.c crc64.h crcspeed.h
+diff --git a/src/crcspeed.d b/src/crcspeed.d
+new file mode 100644
+index 0000000..fbce10a
+--- /dev/null
++++ b/src/crcspeed.d
+@@ -0,0 +1 @@
++crcspeed.o: crcspeed.c crcspeed.h
+diff --git a/src/debug.c b/src/debug.c
+index a026a94..7e5ce65 100644
+--- a/src/debug.c
++++ b/src/debug.c
+@@ -2169,6 +2169,7 @@ int memtest_test_linux_anonymous_maps(void) {
+ #endif /* HAVE_PROC_MAPS */
+ 
+ static void killMainThread(void) {
++#ifndef __wasi__
+     int err;
+     if (pthread_self() != server.main_thread_id && pthread_cancel(server.main_thread_id) == 0) {
+         if ((err = pthread_join(server.main_thread_id,NULL)) != 0) {
+@@ -2177,6 +2178,7 @@ static void killMainThread(void) {
+             serverLog(LL_WARNING, "main thread terminated");
+         }
+     }
++#endif
+ }
+ 
+ /* Kill the running threads (other than current) in an unclean way. This function
+@@ -2439,7 +2441,9 @@ void bugReportEnd(int killViaSignal, int sig) {
+     act.sa_flags = 0;
+     act.sa_handler = SIG_DFL;
+     sigaction (sig, &act, NULL);
++#ifndef __wasi__
+     kill(getpid(),sig);
++#endif
+ }
+ 
+ /* ==================== Logging functions for debugging ===================== */
+diff --git a/src/dict.d b/src/dict.d
+new file mode 100644
+index 0000000..80a1454
+--- /dev/null
++++ b/src/dict.d
+@@ -0,0 +1,2 @@
++dict.o: dict.c fmacros.h dict.h mt19937-64.h zmalloc.h redisassert.h \
++ config.h monotonic.h
+diff --git a/src/eval.c b/src/eval.c
+index e158e7c..134ea43 100644
+--- a/src/eval.c
++++ b/src/eval.c
+@@ -972,7 +972,9 @@ void ldbKillForkedSessions(void) {
+     while((ln = listNext(&li))) {
+         pid_t pid = (unsigned long) ln->value;
+         serverLog(LL_NOTICE,"Killing debugging session %ld",(long)pid);
++#ifndef __wasi__
+         kill(pid,SIGKILL);
++#endif
+     }
+     listRelease(ldb.children);
+     ldb.children = listCreate();
+diff --git a/src/module.c b/src/module.c
+index 915c254..9b02ef0 100644
+--- a/src/module.c
++++ b/src/module.c
+@@ -11310,10 +11310,12 @@ int TerminateModuleForkChild(int child_pid, int wait) {
+     int statloc;
+     serverLog(LL_VERBOSE,"Killing running module fork child: %ld",
+         (long) server.child_pid);
++#ifndef __wasi__
+     if (kill(server.child_pid,SIGUSR1) != -1 && wait) {
+         while(waitpid(server.child_pid, &statloc, 0) !=
+               server.child_pid);
+     }
++#endif
+     /* Reset the buffer accumulating changes while the child saves. */
+     resetChildState();
+     moduleForkInfo.done_handler = NULL;
+@@ -12026,7 +12028,13 @@ void moduleInitModulesSystem(void) {
+     if (anetPipe(server.module_pipe, O_CLOEXEC|O_NONBLOCK, O_CLOEXEC|O_NONBLOCK) == -1) {
+         serverLog(LL_WARNING,
+             "Can't create the pipe for module threads: %s", strerror(errno));
++#ifdef __wasi__
++        /* WASI: 无 pipe（wasi:sockets 与 filesystem 都不提供）。
++         * 模块线程唤醒机制不可用，但模块本身也不能加载，继续启动即可。 */
++        server.module_pipe[0] = server.module_pipe[1] = -1;
++#else
+         exit(1);
++#endif
+     }
+ 
+     /* Create the timers radix tree. */
+diff --git a/src/monotonic.d b/src/monotonic.d
+new file mode 100644
+index 0000000..61987a7
+--- /dev/null
++++ b/src/monotonic.d
+@@ -0,0 +1 @@
++monotonic.o: monotonic.c monotonic.h fmacros.h redisassert.h config.h
+diff --git a/src/mt19937-64.d b/src/mt19937-64.d
+new file mode 100644
+index 0000000..e516fd7
+--- /dev/null
++++ b/src/mt19937-64.d
+@@ -0,0 +1 @@
++mt19937-64.o: mt19937-64.c mt19937-64.h
+diff --git a/src/networking.c b/src/networking.c
+index f97a48a..e40347d 100644
+--- a/src/networking.c
++++ b/src/networking.c
+@@ -4327,6 +4327,14 @@ void initThreadedIO(void) {
+      * we'll handle I/O directly from the main thread. */
+     if (server.io_threads_num == 1) return;
+ 
++#ifdef __wasi__
++    /* WASI: no threads; force single-threaded IO. */
++    if (server.io_threads_num > 1)
++        serverLog(LL_WARNING,"WASI build: io-threads are not supported, using the main thread for IO.");
++    server.io_threads_num = 1;
++    return;
++#endif
++
+     if (server.io_threads_num > IO_THREADS_MAX_NUM) {
+         serverLog(LL_WARNING,"Fatal: too many I/O threads configured. "
+                              "The maximum number is %d.", IO_THREADS_MAX_NUM);
+@@ -4353,6 +4361,7 @@ void initThreadedIO(void) {
+ }
+ 
+ void killIOThreads(void) {
++#ifndef __wasi__
+     int err, j;
+     for (j = 0; j < server.io_threads_num; j++) {
+         if (io_threads[j] == pthread_self()) continue;
+@@ -4367,6 +4376,7 @@ void killIOThreads(void) {
+             }
+         }
+     }
++#endif /* __wasi__: no threads exist */
+ }
+ 
+ void startThreadedIO(void) {
+diff --git a/src/rdb.c b/src/rdb.c
+index a4a58ff..61b1823 100644
+--- a/src/rdb.c
++++ b/src/rdb.c
+@@ -3849,7 +3849,9 @@ void backgroundSaveDoneHandler(int exitcode, int bysignal) {
+  * the child did not exit for an error, but because we wanted), and performs
+  * the cleanup needed. */
+ void killRDBChild(void) {
++#ifndef __wasi__
+     kill(server.child_pid, SIGUSR1);
++#endif
+     /* Because we are not using here waitpid (like we have in killAppendOnlyChild
+      * and TerminateModuleForkChild), all the cleanup operations is done by
+      * checkChildrenDone, that later will find that the process killed.
+diff --git a/src/redis-cli.d b/src/redis-cli.d
+new file mode 100644
+index 0000000..7526dee
+--- /dev/null
++++ b/src/redis-cli.d
+@@ -0,0 +1,6 @@
++redis-cli.o: redis-cli.c fmacros.h ../deps/hiredis/hiredis.h \
++ ../deps/hiredis/read.h ../deps/hiredis/sds.h ../deps/hiredis/alloc.h \
++ ../deps/hiredis/sdscompat.h ../deps/hiredis/sds.h dict.h mt19937-64.h \
++ adlist.h zmalloc.h ../deps/linenoise/linenoise.h anet.h ae.h monotonic.h \
++ connection.h cli_common.h cli_commands.h commands.h \
++ ../deps/hdr_histogram/hdr_histogram.h
+diff --git a/src/redisassert.d b/src/redisassert.d
+new file mode 100644
+index 0000000..fd66de0
+--- /dev/null
++++ b/src/redisassert.d
+@@ -0,0 +1 @@
++redisassert.o: redisassert.c
+diff --git a/src/release.d b/src/release.d
+new file mode 100644
+index 0000000..a48f554
+--- /dev/null
++++ b/src/release.d
+@@ -0,0 +1 @@
++release.o: release.c release.h version.h crc64.h
+diff --git a/src/release.h b/src/release.h
+new file mode 100644
+index 0000000..c9d9e14
+--- /dev/null
++++ b/src/release.h
+@@ -0,0 +1,5 @@
++#define REDIS_GIT_SHA1 "fa6e018c"
++#define REDIS_GIT_DIRTY "151"
++#define REDIS_BUILD_ID "debian-1787810224"
++#include "version.h"
++#define REDIS_BUILD_ID_RAW REDIS_VERSION REDIS_BUILD_ID REDIS_GIT_DIRTY REDIS_GIT_SHA1
+diff --git a/src/scripting_stubs.c b/src/scripting_stubs.c
+new file mode 100644
+index 0000000..a2bd413
+--- /dev/null
++++ b/src/scripting_stubs.c
+@@ -0,0 +1,65 @@
++/* scripting_stubs.c — Lua/脚本功能已从 WASI 构建中移除（EVAL/SCRIPT/FUNCTION
++ * 不支持，见 NOTES.md），这里是各引用点的零值桩，保证语义安全：
++ * - 无脚本在运行 / 无脚本超时 / 无 ldb 子进程
++ * - 脚本与函数的内存占用为 0
++ * - evalScriptsDict() 返回一个空 dict（调用方会 dictSize() 它）
++ */
++
++#include "server.h"
++#include "script.h"
++#include "functions.h"
++
++int scriptIsRunning(void) { return 0; }
++int scriptIsEval(void) { return 0; }
++int scriptIsTimedout(void) { return 0; }
++
++int ldbPendingChildren(void) { return 0; }
++void ldbKillForkedSessions(void) { }
++
++unsigned long evalMemory(void) { return 0; }
++unsigned long evalScriptsMemory(void) { return 0; }
++unsigned long functionsMemory(void) { return 0; }
++unsigned long functionsMemoryOverhead(void) { return 0; }
++unsigned long functionsNum(void) { return 0; }
++unsigned long functionsLibNum(void) { return 0; }
++
++dict *evalScriptsDict(void) {
++    static dict *d = NULL;
++    if (d == NULL) d = dictCreate(&hashDictType);
++    return d;
++}
++
++/* ---- 函数库上下文（RDB/AOF 的 functions 读写路径）---- */
++/* 无任何函数库：GetCurrent 返回哨兵指针（struct 不透明，用哑存储），各操作空实现 */
++static int dummy_lib_ctx_storage;
++
++functionsLibCtx *functionsLibCtxGetCurrent(void) {
++    return (functionsLibCtx *)&dummy_lib_ctx_storage;
++}
++
++functionsLibCtx *functionsLibCtxCreate(void) {
++    return (functionsLibCtx *)&dummy_lib_ctx_storage;
++}
++
++void functionsLibCtxClearCurrent(int async) { (void)async; }
++void functionsLibCtxFree(functionsLibCtx *lib_ctx) { (void)lib_ctx; }
++void functionsLibCtxClear(functionsLibCtx *lib_ctx) { (void)lib_ctx; }
++void functionsLibCtxSwapWithCurrent(functionsLibCtx *lib_ctx) { (void)lib_ctx; }
++
++size_t functionsLibCtxFunctionsLen(functionsLibCtx *functions_ctx) {
++    (void)functions_ctx;
++    return 0;
++}
++
++dict *functionsLibGet(void) {
++    static dict *d = NULL;
++    if (d == NULL) d = dictCreate(&hashDictType);
++    return d;
++}
++
++sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err,
++                                  functionsLibCtx *lib_ctx, size_t timeout) {
++    (void)code; (void)replace; (void)lib_ctx; (void)timeout;
++    if (err) *err = sdsnew("FUNCTION is not supported under WASI");
++    return NULL;
++}
+diff --git a/src/sentinel.c b/src/sentinel.c
+index 1d6c565..86e6964 100644
+--- a/src/sentinel.c
++++ b/src/sentinel.c
+@@ -817,7 +817,13 @@ void sentinelRunPendingScripts(void) {
+         sj->flags |= SENTINEL_SCRIPT_RUNNING;
+         sj->start_time = mstime();
+         sj->retry_num++;
++#ifndef __wasi__
+         pid = fork();
++#else
++        /* WASI: no fork(); treat as fork error so the script is reported
++         * failed and retried/removed by the normal error path. */
++        pid = -1;
++#endif
+ 
+         if (pid == -1) {
+             /* Parent (fork error).
+@@ -830,9 +836,13 @@ void sentinelRunPendingScripts(void) {
+         } else if (pid == 0) {
+             /* Child */
+             connTypeCleanupAll();
++#ifndef __wasi__
+             execve(sj->argv[0],sj->argv,environ);
+             /* If we are here an error occurred. */
+             _exit(2); /* Don't retry execution. */
++#else
++            _exit(2);
++#endif
+         } else {
+             sentinel.running_scripts++;
+             sj->pid = pid;
+@@ -863,6 +873,9 @@ void sentinelCollectTerminatedScripts(void) {
+     int statloc;
+     pid_t pid;
+ 
++#ifdef __wasi__
++    return; /* WASI: no child processes possible */
++#else
+     while ((pid = waitpid(-1, &statloc, WNOHANG)) > 0) {
+         int exitcode = WEXITSTATUS(statloc);
+         int bysignal = 0;
+@@ -902,6 +915,7 @@ void sentinelCollectTerminatedScripts(void) {
+         }
+         sentinel.running_scripts--;
+     }
++#endif /* __wasi__ */
+ }
+ 
+ /* Kill scripts in timeout, they'll be collected by the
+@@ -920,7 +934,9 @@ void sentinelKillTimedoutScripts(void) {
+         {
+             sentinelEvent(LL_WARNING,"-script-timeout",NULL,"%s %ld",
+                 sj->argv[0], (long)sj->pid);
++#ifndef __wasi__
+             kill(sj->pid,SIGKILL);
++#endif
+         }
+     }
+ }
+diff --git a/src/server.c b/src/server.c
+index d34afad..4f7ea66 100644
+--- a/src/server.c
++++ b/src/server.c
+@@ -1159,6 +1159,9 @@ void exitExecutionUnit(void) {
+ }
+ 
+ void checkChildrenDone(void) {
++#ifdef __wasi__
++    return; /* WASI: no child processes possible */
++#else
+     int statloc = 0;
+     pid_t pid;
+ 
+@@ -1207,6 +1210,7 @@ void checkChildrenDone(void) {
+         /* start any pending forks immediately. */
+         replicationStartPendingFork();
+     }
++#endif /* __wasi__ */
+ }
+ 
+ /* Called from serverCron and cronUpdateMemoryStats to update cached memory metrics. */
+@@ -2215,7 +2219,9 @@ int restartServer(int flags, mstime_t delay) {
+     if (delay) usleep(delay*1000);
+     zfree(server.exec_argv[0]);
+     server.exec_argv[0] = zstrdup(server.executable);
++#ifndef __wasi__
+     execve(server.executable,server.exec_argv,environ);
++#endif
+ 
+     /* If an error occurred here, there is nothing we can do, but exit. */
+     _exit(1);
+@@ -2303,6 +2309,10 @@ int setOOMScoreAdj(int process_class) {
+  * max number of clients, the function will do the reverse setting
+  * server.maxclients to the value that we can actually handle. */
+ void adjustOpenFilesLimit(void) {
++#ifdef __wasi__
++    /* WASI: no rlimits, keep server.maxclients as configured. */
++    return;
++#else
+     rlim_t maxfiles = server.maxclients+CONFIG_MIN_RESERVED_FDS;
+     struct rlimit limit;
+ 
+@@ -2378,6 +2388,7 @@ void adjustOpenFilesLimit(void) {
+             }
+         }
+     }
++#endif /* __wasi__ */
+ }
+ 
+ /* Check that server.tcp_backlog can be actually enforced in Linux according
+@@ -2783,12 +2794,16 @@ void initServer(void) {
+         server.maxmemory_policy = MAXMEMORY_NO_EVICTION;
+     }
+ 
++#ifndef __wasi__
++    /* WASI: Lua 需要 wasm 异常处理（sjlj），wasmtime 48 不支持旧版 EH → 砍掉
++     * EVAL/SCRIPT/FUNCTION 全套，commands.def 里对应条目也已剥离 */
+     luaEnvInit();
+     scriptingInit(1);
+     if (functionsInit() == C_ERR) {
+         serverPanic("Functions initialization failed, check the server logs.");
+         exit(1);
+     }
++#endif
+     slowlogInit();
+     latencyMonitorInit();
+ 
+@@ -3703,8 +3718,13 @@ void call(client *c, int flags) {
+     /* If the client has keys tracking enabled for client side caching,
+      * make sure to remember the keys it fetched via this command. For read-only
+      * scripts, don't process the script, only the commands it executes. */
++#ifdef __wasi__
++    /* WASI: 无 Lua，所有命令都不是只读脚本 */
++    if (c->cmd->flags & CMD_READONLY)
++#else
+     if ((c->cmd->flags & CMD_READONLY) && (c->cmd->proc != evalRoCommand)
+         && (c->cmd->proc != evalShaRoCommand) && (c->cmd->proc != fcallroCommand))
++#endif
+     {
+         /* We use the tracking flag of the original external client that
+          * triggered the command, but we take the keys from the actual command
+@@ -3853,6 +3873,7 @@ int commandCheckArity(struct redisCommand *cmd, int argc, sds *err) {
+ uint64_t getCommandFlags(client *c) {
+     uint64_t cmd_flags = c->cmd->flags;
+ 
++#ifndef __wasi__
+     if (c->cmd->proc == fcallCommand || c->cmd->proc == fcallroCommand) {
+         cmd_flags = fcallGetCommandFlags(c, cmd_flags);
+     } else if (c->cmd->proc == evalCommand || c->cmd->proc == evalRoCommand ||
+@@ -3860,6 +3881,7 @@ uint64_t getCommandFlags(client *c) {
+     {
+         cmd_flags = evalGetCommandFlags(c, cmd_flags);
+     }
++#endif
+ 
+     return cmd_flags;
+ }
+@@ -6252,6 +6274,11 @@ void createPidFile(void) {
+ }
+ 
+ void daemonize(void) {
++#ifdef __wasi__
++    /* WASI: no fork()/setsid(); the server can only run in foreground. */
++    fprintf(stderr, "WASI build: daemonize is not supported, running in foreground.\n");
++    return;
++#else
+     int fd;
+ 
+     if (fork() != 0) exit(0); /* parent exits */
+@@ -6266,6 +6293,7 @@ void daemonize(void) {
+         dup2(fd, STDERR_FILENO);
+         if (fd > STDERR_FILENO) close(fd);
+     }
++#endif /* __wasi__ */
+ }
+ 
+ sds getVersion(void) {
+@@ -6456,6 +6484,11 @@ void closeChildUnusedResourceAfterFork(void) {
+ 
+ /* purpose is one of CHILD_TYPE_ types */
+ int redisFork(int purpose) {
++#ifdef __wasi__
++    /* WASI: no fork(). Callers (BGSAVE / BGREWRITEAOF) handle the error path. */
++    errno = ENOSYS;
++    return -1;
++#else
+     if (isMutuallyExclusiveChildType(purpose)) {
+         if (hasActiveChildProcess()) {
+             errno = EEXIST;
+@@ -6523,6 +6556,7 @@ int redisFork(int purpose) {
+                               NULL);
+     }
+     return childpid;
++#endif /* __wasi__ */
+ }
+ 
+ void sendChildCowInfo(childInfoType info_type, char *pname) {
+@@ -6996,10 +7030,13 @@ int main(int argc, char **argv) {
+     /* We need to init sentinel right now as parsing the configuration file
+      * in sentinel mode will have the effect of populating the sentinel
+      * data structures with master nodes to monitor. */
++#ifndef __wasi__
++    /* WASI: sentinel needs fork() to run scripts; not supported. */
+     if (server.sentinel_mode) {
+         initSentinelConfig();
+         initSentinel();
+     }
++#endif
+ 
+     /* Check if we need to start in redis-check-rdb/aof mode. We just execute
+      * the program main. However the program is part of the Redis executable
+@@ -7024,6 +7061,8 @@ int main(int argc, char **argv) {
+         }
+         if (strcmp(argv[1], "--help") == 0 ||
+             strcmp(argv[1], "-h") == 0) usage();
++#ifndef __wasi__
++        /* WASI: memtest 依赖 termios，未编译进 wasm 构建 */
+         if (strcmp(argv[1], "--test-memory") == 0) {
+             if (argc == 3) {
+                 memtest(atoi(argv[2]),50);
+@@ -7033,9 +7072,13 @@ int main(int argc, char **argv) {
+                 fprintf(stderr,"Example: ./redis-server --test-memory 4096\n\n");
+                 exit(1);
+             }
+-        } if (strcmp(argv[1], "--check-system") == 0) {
++        }
++#endif
++#ifndef __wasi__
++        if (strcmp(argv[1], "--check-system") == 0) {
+             exit(syscheck() ? 0 : 1);
+         }
++#endif
+         /* Parse command line options
+          * Precedence wise, File, stdin, explicit options -- last config is the one that matters.
+          *
+diff --git a/src/siphash.d b/src/siphash.d
+new file mode 100644
+index 0000000..80393a8
+--- /dev/null
++++ b/src/siphash.d
+@@ -0,0 +1 @@
++siphash.o: siphash.c
+diff --git a/src/socket.c b/src/socket.c
+index 48cee62..9b0e8db 100644
+--- a/src/socket.c
++++ b/src/socket.c
+@@ -146,7 +146,23 @@ static int connSocketWrite(connection *conn, const void *data, size_t data_len)
+ }
+ 
+ static int connSocketWritev(connection *conn, const struct iovec *iov, int iovcnt) {
++#ifdef __wasi__
++    /* wasi-libc p2 的 writev 只写第一个 iov（实测），逐段 write 代替，
++     * 否则多 buffer 的大回复会静默截断。 */
++    int ret = 0;
++    for (int i = 0; i < iovcnt; i++) {
++        if (iov[i].iov_len == 0) continue;
++        int rc = write(conn->fd, iov[i].iov_base, iov[i].iov_len);
++        if (rc == -1) {
++            if (ret == 0) ret = -1; /* 一段都没写出去，保留错误 */
++            break;
++        }
++        ret += rc;
++        if ((size_t)rc < iov[i].iov_len) break; /* 部分写入，下轮事件继续 */
++    }
++#else
+     int ret = writev(conn->fd, iov, iovcnt);
++#endif
+     if (ret < 0 && errno != EAGAIN) {
+         conn->last_errno = errno;
+ 
+diff --git a/src/strl.d b/src/strl.d
+new file mode 100644
+index 0000000..59b5976
+--- /dev/null
++++ b/src/strl.d
+@@ -0,0 +1 @@
++strl.o: strl.c
+diff --git a/src/unix.c b/src/unix.c
+index abfce10..e4e447d 100644
+--- a/src/unix.c
++++ b/src/unix.c
+@@ -27,6 +27,9 @@
+ #include "server.h"
+ #include "connection.h"
+ 
++#ifndef __wasi__
++/* WASI: wasi:sockets 不支持 AF_UNIX，整个 Unix socket 连接类型编译掉。
++ * connTypeInitialize 里对 RedisRegisterConnectionTypeUnix 的调用见文末桩。 */
+ static ConnectionType CT_Unix;
+ 
+ static const char *connUnixGetType(connection *conn) {
+@@ -208,3 +211,9 @@ int RedisRegisterConnectionTypeUnix(void)
+ {
+     return connTypeRegister(&CT_Unix);
+ }
++#else /* __wasi__: 不注册 Unix socket 连接类型（配置了 unixsocket 也不会生效） */
++int RedisRegisterConnectionTypeUnix(void)
++{
++    return C_OK;
++}
++#endif /* __wasi__ */
+diff --git a/src/wasi_stubs.c b/src/wasi_stubs.c
+new file mode 100644
+index 0000000..721fd26
+--- /dev/null
++++ b/src/wasi_stubs.c
+@@ -0,0 +1,171 @@
++/* WASI stubs for Redis.
++ *
++ * wasi-libc 声明了这些 POSIX API 但没有实现（或语义无法支持），这里给出
++ * 单线程 guest 下语义正确的实现：
++ *
++ * - syslog:     WASI 无 syslog，转发到 stderr（Redis 默认也不用 syslog）
++ * - dlfcn:      WASI 不能加载动态库 → MODULE 命令会优雅报错
++ * - dladdr:     WASI 无动态符号表 → 返回 0（调用方自然跳过）
++ * - mmap:       官方 -lwasi-emulated-mman 提供 mmap/munmap；这里补 madvise
++ * - pthread 锁: 单线程 no-op 实现（guest 里没有线程，no-op 锁语义正确）
++ * - 信号相关:   sigaction/sigemptyset 等 no-op（guest 收不到真实信号；
++ *               signal/raise 由 -lwasi-emulated-signal 提供）
++ */
++
++#include <errno.h>
++#include <stdarg.h>
++#include <stddef.h>
++#include <stdio.h>
++#include <sys/types.h>
++#include <sys/mman.h>
++#include <dlfcn.h>
++#include <pthread.h>
++#include <signal.h>
++
++/* ---- syslog ---- */
++void openlog(const char *ident, int option, int facility) {
++    (void)ident; (void)option; (void)facility;
++}
++
++void syslog(int priority, const char *format, ...) {
++    va_list ap;
++    fprintf(stderr, "[syslog:%d] ", priority);
++    va_start(ap, format);
++    vfprintf(stderr, format, ap);
++    va_end(ap);
++    fputc('\n', stderr);
++}
++
++void closelog(void) {
++}
++
++/* ---- dlfcn ---- */
++static const char dl_error[] = "dynamic module loading is not supported under WASI";
++
++void *dlopen(const char *file, int mode) {
++    (void)file; (void)mode;
++    errno = ENOSYS;
++    return NULL;
++}
++
++void *dlsym(void *handle, const char *symbol) {
++    (void)handle; (void)symbol;
++    errno = ENOSYS;
++    return NULL;
++}
++
++int dlclose(void *handle) {
++    (void)handle;
++    return 0;
++}
++
++char *dlerror(void) {
++    return (char *)dl_error;
++}
++
++int dladdr(void *addr, Dl_info *info) {
++    (void)addr; (void)info;
++    return 0; /* WASI 无动态符号表 */
++}
++
++/* ---- mman 补缺（mmap/munmap 走官方 -lwasi-emulated-mman） ---- */
++/* madvise 只被当作性能优化使用，单线程场景假装成功即可 */
++int madvise(void *addr, size_t length, int advice) {
++    (void)addr; (void)length; (void)advice;
++    return 0;
++}
++
++/* ---- 信号：no-op 实现（信号永远不会投递，安装/清空都无害） ---- */
++int sigemptyset(sigset_t *set) { if (set) *set = 0; return 0; }
++int sigfillset(sigset_t *set) { if (set) *set = ~(sigset_t)0; return 0; }
++int sigaddset(sigset_t *set, int signum) { (void)signum; if (set) *set |= 1; return 0; }
++int sigdelset(sigset_t *set, int signum) { (void)signum; if (set) *set = 0; return 0; }
++int sigismember(const sigset_t *set, int signum) { (void)set; (void)signum; return 0; }
++int sigprocmask(int how, const sigset_t *set, sigset_t *oldset) {
++    (void)how; (void)set; (void)oldset;
++    return 0;
++}
++int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact) {
++    (void)signum; (void)act; (void)oldact;
++    return 0;
++}
++int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset) {
++    (void)how; (void)set; (void)oldset;
++    return 0;
++}
++
++/* ---- 杂项 ---- */
++mode_t umask(mode_t mask) {
++    (void)mask;
++    return 0; /* WASI 无文件权限位语义，空实现 */
++}
++
++void tzset(void) {
++    /* WASI 无环境时区概念，localtime.c 自行处理时区 */
++}
++
++int setitimer(int which, const struct itimerval *new_value, struct itimerval *old_value) {
++    (void)which; (void)new_value; (void)old_value;
++    return 0; /* watchdog 定时器在 WASI 下不起作用（无信号投递） */
++}
++
++/* mkstemp/mkostemp：wasi-libc 没有，用计数器 + O_EXCL 实现 */
++#include <fcntl.h>
++#include <unistd.h>
++#include <string.h>
++
++static int mkstemp_common(char *t, int flags) {
++    size_t len = strlen(t);
++    if (len < 6) { errno = EINVAL; return -1; }
++    char *xs = t + len - 6;
++    static unsigned counter;
++    static const char alnum[] = "0123456789abcdefghijklmnopqrstuvwxyz";
++    for (unsigned i = 0; i < 999999; i++) {
++        unsigned n = ++counter;
++        for (int j = 5; j >= 0; j--) { xs[j] = alnum[n % 36]; n /= 36; }
++        int fd = open(t, flags | O_RDWR | O_CREAT | O_EXCL, 0600);
++        if (fd != -1) return fd;
++        if (errno != EEXIST) return -1;
++    }
++    errno = EEXIST;
++    return -1;
++}
++
++int mkstemp(char *t) { return mkstemp_common(t, 0); }
++int mkostemp(char *t, int flags) { return mkstemp_common(t, flags); }
++
++/* tmpnam：Lua 的 os.tmpname 用（不创建文件，只生成名字） */
++char *tmpnam(char *s) {
++    static char buf[512];
++    static unsigned counter;
++    if (!s) s = buf;
++    snprintf(s, 512, "wasi-tmp-%u", ++counter);
++    return s;
++}
++
++/* flock：pidfile/集群配置文件的排他锁。单实例 guest 下恒成功。 */
++#include <sys/file.h>
++int flock(int fd, int operation) {
++    (void)fd; (void)operation;
++    return 0;
++}
++
++/* TLS 连接类型未编译（BUILD_TLS=no），注册函数空实现满足 connection.c 的调用 */
++int RedisRegisterConnectionTypeTLS(void) {
++    return 0;
++}
++
++/* ---- pthread: 单线程 no-op ---- */
++int pthread_mutex_lock(pthread_mutex_t *m) { (void)m; return 0; }
++int pthread_mutex_unlock(pthread_mutex_t *m) { (void)m; return 0; }
++int pthread_mutex_trylock(pthread_mutex_t *m) { (void)m; return 0; }
++int pthread_mutex_timedlock(pthread_mutex_t *m, const struct timespec *ts) {
++    (void)m; (void)ts;
++    return 0;
++}
++
++int pthread_once(pthread_once_t *once, void (*init)(void)) {
++    (void)once;
++    init();
++    return 0;
++}
+diff --git a/src/zmalloc.d b/src/zmalloc.d
+new file mode 100644
+index 0000000..8e1cb9c
+--- /dev/null
++++ b/src/zmalloc.d
+@@ -0,0 +1,2 @@
++zmalloc.o: zmalloc.c fmacros.h config.h solarisfixes.h zmalloc.h \
++ atomicvar.h

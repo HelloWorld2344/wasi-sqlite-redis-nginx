@@ -1,0 +1,257 @@
+diff --git a/.gitignore b/.gitignore
+index 7e50886..0cd56a4 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,3 +1,5 @@
+ /Makefile
+ /objs/
+ /tmp/
++objs/
++Makefile
+diff --git a/auto/endianness b/auto/endianness
+index 1b552b6..37cfb6f 100644
+--- a/auto/endianness
++++ b/auto/endianness
+@@ -31,8 +31,8 @@ ngx_test="$CC $CC_TEST_FLAGS $CC_AUX_FLAGS \
+ 
+ eval "$ngx_test >> $NGX_AUTOCONF_ERR 2>&1"
+ 
+-if [ -x $NGX_AUTOTEST ]; then
+-    if $NGX_AUTOTEST >/dev/null 2>&1; then
++if [ -f $NGX_AUTOTEST ]; then
++    if ${NGX_RUNNER:-} $NGX_AUTOTEST >/dev/null 2>&1; then
+         echo " little endian"
+         have=NGX_HAVE_LITTLE_ENDIAN . auto/have
+     else
+diff --git a/auto/feature b/auto/feature
+index 3561f59..6d9a511 100644
+--- a/auto/feature
++++ b/auto/feature
+@@ -47,13 +47,13 @@ ngx_feature_inc_path=
+ eval "/bin/sh -c \"$ngx_test\" >> $NGX_AUTOCONF_ERR 2>&1"
+ 
+ 
+-if [ -x $NGX_AUTOTEST ]; then
++if [ -f $NGX_AUTOTEST ]; then
+ 
+     case "$ngx_feature_run" in
+ 
+         yes)
+             # /bin/sh is used to intercept "Killed" or "Abort trap" messages
+-            if /bin/sh -c $NGX_AUTOTEST >> $NGX_AUTOCONF_ERR 2>&1; then
++            if /bin/sh -c "${NGX_RUNNER:-} $NGX_AUTOTEST" >> $NGX_AUTOCONF_ERR 2>&1; then
+                 echo " found"
+                 ngx_found=yes
+ 
+@@ -68,14 +68,14 @@ if [ -x $NGX_AUTOTEST ]; then
+ 
+         value)
+             # /bin/sh is used to intercept "Killed" or "Abort trap" messages
+-            if /bin/sh -c $NGX_AUTOTEST >> $NGX_AUTOCONF_ERR 2>&1; then
++            if /bin/sh -c "${NGX_RUNNER:-} $NGX_AUTOTEST" >> $NGX_AUTOCONF_ERR 2>&1; then
+                 echo " found"
+                 ngx_found=yes
+ 
+                 cat << END >> $NGX_AUTO_CONFIG_H
+ 
+ #ifndef $ngx_feature_name
+-#define $ngx_feature_name  `$NGX_AUTOTEST`
++#define $ngx_feature_name  `${NGX_RUNNER:-} $NGX_AUTOTEST`
+ #endif
+ 
+ END
+@@ -86,7 +86,7 @@ END
+ 
+         bug)
+             # /bin/sh is used to intercept "Killed" or "Abort trap" messages
+-            if /bin/sh -c $NGX_AUTOTEST >> $NGX_AUTOCONF_ERR 2>&1; then
++            if /bin/sh -c "${NGX_RUNNER:-} $NGX_AUTOTEST" >> $NGX_AUTOCONF_ERR 2>&1; then
+                 echo " not found"
+ 
+             else
+diff --git a/auto/include b/auto/include
+index c1bd364..f75c54a 100644
+--- a/auto/include
++++ b/auto/include
+@@ -31,7 +31,7 @@ ngx_test="$CC -o $NGX_AUTOTEST $NGX_AUTOTEST.c"
+ 
+ eval "$ngx_test >> $NGX_AUTOCONF_ERR 2>&1"
+ 
+-if [ -x $NGX_AUTOTEST ]; then
++if [ -f $NGX_AUTOTEST ]; then
+ 
+     ngx_found=yes
+ 
+diff --git a/auto/types/sizeof b/auto/types/sizeof
+index 480d8cf..fbc7d5a 100644
+--- a/auto/types/sizeof
++++ b/auto/types/sizeof
+@@ -39,8 +39,8 @@ ngx_test="$CC $CC_TEST_FLAGS $CC_AUX_FLAGS \
+ eval "$ngx_test >> $NGX_AUTOCONF_ERR 2>&1"
+ 
+ 
+-if [ -x $NGX_AUTOTEST ]; then
+-    ngx_size=`$NGX_AUTOTEST`
++if [ -f $NGX_AUTOTEST ]; then
++    ngx_size=`${NGX_RUNNER:-} $NGX_AUTOTEST`
+     echo " $ngx_size bytes"
+ fi
+ 
+diff --git a/auto/types/typedef b/auto/types/typedef
+index d54c289..514506e 100644
+--- a/auto/types/typedef
++++ b/auto/types/typedef
+@@ -39,7 +39,7 @@ END
+ 
+     eval "$ngx_test >> $NGX_AUTOCONF_ERR 2>&1"
+ 
+-    if [ -x $NGX_AUTOTEST ]; then
++    if [ -f $NGX_AUTOTEST ]; then
+         if [ $ngx_try = $ngx_type ]; then
+             echo " found"
+             ngx_found=yes
+diff --git a/auto/types/uintptr_t b/auto/types/uintptr_t
+index a33d6d0..6915cab 100644
+--- a/auto/types/uintptr_t
++++ b/auto/types/uintptr_t
+@@ -31,7 +31,7 @@ ngx_test="$CC $CC_TEST_FLAGS $CC_AUX_FLAGS \
+ 
+ eval "$ngx_test >> $NGX_AUTOCONF_ERR 2>&1"
+ 
+-if [ -x $NGX_AUTOTEST ]; then
++if [ -f $NGX_AUTOTEST ]; then
+     echo " uintptr_t found"
+     found=yes
+ else
+diff --git a/src/core/ngx_cycle.c b/src/core/ngx_cycle.c
+index 410cc3c..f563a48 100644
+--- a/src/core/ngx_cycle.c
++++ b/src/core/ngx_cycle.c
+@@ -1259,6 +1259,7 @@ ngx_reopen_files(ngx_cycle_t *cycle, ngx_uid_t user)
+ 
+                 fi.st_mode |= (S_IRUSR|S_IWUSR);
+ 
++#ifndef __wasi__
+                 if (chmod((const char *) file[i].name.data, fi.st_mode) == -1) {
+                     ngx_log_error(NGX_LOG_EMERG, cycle->log, ngx_errno,
+                                   "chmod() \"%s\" failed", file[i].name.data);
+@@ -1271,6 +1272,7 @@ ngx_reopen_files(ngx_cycle_t *cycle, ngx_uid_t user)
+ 
+                     continue;
+                 }
++#endif /* __wasi__: WASI 无权限位 */
+             }
+         }
+ 
+diff --git a/src/core/ngx_file.c b/src/core/ngx_file.c
+index 63ada85..13a6f35 100644
+--- a/src/core/ngx_file.c
++++ b/src/core/ngx_file.c
+@@ -642,11 +642,13 @@ ngx_create_paths(ngx_cycle_t *cycle, ngx_uid_t user)
+         {
+             fi.st_mode |= (S_IRUSR|S_IWUSR|S_IXUSR);
+ 
++#ifndef __wasi__
+             if (chmod((const char *) path[i]->name.data, fi.st_mode) == -1) {
+                 ngx_log_error(NGX_LOG_EMERG, cycle->log, ngx_errno,
+                               "chmod() \"%s\" failed", path[i]->name.data);
+                 return NGX_ERROR;
+             }
++#endif /* __wasi__: WASI 无权限位 */
+         }
+         }
+ #endif
+diff --git a/src/http/ngx_http_request.c b/src/http/ngx_http_request.c
+index ed9a7e8..bf54895 100644
+--- a/src/http/ngx_http_request.c
++++ b/src/http/ngx_http_request.c
+@@ -3239,6 +3239,12 @@ ngx_http_test_reading(ngx_http_request_t *r)
+ #endif
+ 
+     n = recv(c->fd, buf, 1, MSG_PEEK);
++#ifdef __wasi__
++    if (n == -1 && (ngx_socket_errno == ENOSYS || ngx_socket_errno == ENOTSUP)) {
++        /* wasi:sockets 不支持 MSG_PEEK（返回 ENOTSUP），当作暂无数据 */
++        ngx_socket_errno = NGX_EAGAIN;
++    }
++#endif
+ 
+     if (n == 0) {
+         rev->eof = 1;
+diff --git a/src/http/ngx_http_upstream.c b/src/http/ngx_http_upstream.c
+index 3f86534..c27878a 100644
+--- a/src/http/ngx_http_upstream.c
++++ b/src/http/ngx_http_upstream.c
+@@ -1509,6 +1509,12 @@ ngx_http_upstream_check_broken_connection(ngx_http_request_t *r,
+ #endif
+ 
+     n = recv(c->fd, buf, 1, MSG_PEEK);
++#ifdef __wasi__
++    if (n == -1 && (ngx_socket_errno == ENOSYS || ngx_socket_errno == ENOTSUP)) {
++        /* wasi:sockets 不支持 MSG_PEEK（返回 ENOTSUP），当作暂无数据 */
++        ngx_socket_errno = NGX_EAGAIN;
++    }
++#endif
+ 
+     err = ngx_socket_errno;
+ 
+diff --git a/src/os/unix/ngx_readv_chain.c b/src/os/unix/ngx_readv_chain.c
+index 48fa0a7..1d100a7 100644
+--- a/src/os/unix/ngx_readv_chain.c
++++ b/src/os/unix/ngx_readv_chain.c
+@@ -122,7 +122,24 @@ ngx_readv_chain(ngx_connection_t *c, ngx_chain_t *chain, off_t limit)
+                    "readv: %ui, last:%uz", vec.nelts, iov->iov_len);
+ 
+     do {
++#ifdef __wasi__
++        /* wasi-libc p2 的 readv 只读第一个 iov（实测），逐段 read 代替 */
++        {
++            struct iovec *iovs = (struct iovec *) vec.elts;
++            n = 0;
++            for (ngx_uint_t i = 0; i < vec.nelts; i++) {
++                ssize_t rc = read(c->fd, iovs[i].iov_base, iovs[i].iov_len);
++                if (rc <= 0) {
++                    if (n == 0) { n = rc; }
++                    break;
++                }
++                n += rc;
++                if ((size_t) rc < iovs[i].iov_len) break;
++            }
++        }
++#else
+         n = readv(c->fd, (struct iovec *) vec.elts, vec.nelts);
++#endif
+ 
+         if (n == 0) {
+             rev->ready = 0;
+diff --git a/src/os/unix/ngx_writev_chain.c b/src/os/unix/ngx_writev_chain.c
+index e38a3aa..ba2203e 100644
+--- a/src/os/unix/ngx_writev_chain.c
++++ b/src/os/unix/ngx_writev_chain.c
+@@ -186,7 +186,26 @@ ngx_writev(ngx_connection_t *c, ngx_iovec_t *vec)
+ 
+ eintr:
+ 
++#ifdef __wasi__
++    /* wasi-libc p2 的 writev 只写第一个 iov（实测），逐段 write 代替 */
++    {
++        ssize_t total = 0;
++        for (ngx_uint_t i = 0; i < vec->count; i++) {
++            ssize_t rc = write(c->fd, vec->iovs[i].iov_base, vec->iovs[i].iov_len);
++            if (rc == -1) {
++                if (total) { n = total; goto eintr_done; }
++                n = -1;
++                goto eintr_done;
++            }
++            total += rc;
++            if ((size_t) rc < vec->iovs[i].iov_len) break;
++        }
++        n = total;
++    }
++eintr_done:
++#else
+     n = writev(c->fd, vec->iovs, vec->count);
++#endif
+ 
+     ngx_log_debug2(NGX_LOG_DEBUG_EVENT, c->log, 0,
+                    "writev: %z of %uz", n, vec->size);

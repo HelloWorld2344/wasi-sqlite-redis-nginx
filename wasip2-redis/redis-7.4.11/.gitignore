@@ -1,0 +1,4 @@
+*.o
+*.wasm
+src/redis-cli
+src/redis-server

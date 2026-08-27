@@ -1,0 +1,46 @@
+# ---- 工具链（setup.sh 下载到仓库外，这里是双保险）----
+/wasi-sdk-*/
+/wasmtime-*/
+
+# ---- 各应用构建中间产物与最终产物（编译生成，不提交）----
+wasip1-sqlite/sqlite-autoconf-3530400/
+wasip1-sqlite/sqlite-autoconf-3530400.tar.gz
+wasip1-sqlite/out/
+wasip2-redis/wasm-obj/
+wasip2-redis/host-obj/
+wasip2-redis/out/
+wasip2-nginx/nginx-1.31.4/objs/
+wasip2-nginx/out/
+
+# ---- demo 运行时数据 ----
+demo/sqlite/*.db
+demo/sqlite/*.lock
+demo/redis/redis-data/
+demo/nginx/logs/
+demo/nginx/client_body_temp/
+demo/nginx/proxy_temp/
+demo/nginx/fastcgi_temp/
+demo/nginx/uwsgi_temp/
+demo/nginx/scgi_temp/
+demo/nginx/*.pid
+
+# ---- 通用 ----
+*.o
+*.a
+wasip2-nginx/run/logs/
+wasip2-nginx/run/client_body_temp/
+wasip2-nginx/run/proxy_temp/
+wasip2-nginx/run/fastcgi_temp/
+wasip2-nginx/run/uwsgi_temp/
+wasip2-nginx/run/scgi_temp/
+wasip2-nginx/run/*.pid
+wasip2-redis/redis-data/
+
+# 目录本身保留（.gitkeep），仅忽略内容
+!demo/nginx/logs/.gitkeep
+!wasip2-nginx/run/logs/.gitkeep
+
+# IDE / OS
+.cache/
+.vs/
+.vscode/
