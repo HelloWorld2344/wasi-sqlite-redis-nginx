@@ -44,3 +44,13 @@ wasip2-redis/redis-data/
 .cache/
 .vs/
 .vscode/
+
+# ---- benchmark 运行时产物（编译好的测试程序本身要提交，用于立即测试）----
+benchmark/RESULTS.md
+benchmark/sqlite/*.db*
+benchmark/redis/redis-data/
+benchmark/nginx/native-conf/logs/*
+benchmark/nginx/wasm-conf/logs/*
+benchmark/nginx/*/client_body_temp/
+benchmark/nginx/*/proxy_temp/
+benchmark/*.pid

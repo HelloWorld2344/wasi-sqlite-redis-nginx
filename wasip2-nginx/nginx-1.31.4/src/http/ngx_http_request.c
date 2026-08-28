@@ -3241,7 +3241,11 @@ ngx_http_test_reading(ngx_http_request_t *r)
     n = recv(c->fd, buf, 1, MSG_PEEK);
 #ifdef __wasi__
     if (n == -1 && (ngx_socket_errno == ENOSYS || ngx_socket_errno == ENOTSUP)) {
-        /* wasi:sockets 不支持 MSG_PEEK（返回 ENOTSUP），当作暂无数据 */
+        /* wasi:sockets 不支持 MSG_PEEK（返回 ENOTSUP），当作暂无数据。
+         * 注意：必须走 EAGAIN 路径完成 level-event 的读事件摘除——
+         * 若直接 return，探测过的连接事件会留在 select 集里，
+         * p2 select 对半关闭连接持续报就绪 → 忙循环（实测 CPU 67%、
+         * 第 2 轮压测起全部连接饿死）。 */
         ngx_socket_errno = NGX_EAGAIN;
     }
 #endif

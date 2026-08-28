@@ -87,6 +87,18 @@ run-demo-nginx: check-runtime
 		-S inherit-network=y -S allow-ip-name-lookup=y --dir=. --env HOME=$(HOME) \
 		nginx.wasm -p . -c conf/nginx.conf
 
+# ---- 基准测试（编译 + 运行；工具见 benchmark/build.sh 与 benchmark/run.sh）----
+# make bench-build  一键编译三应用的测试程序（native+wasm）到 benchmark/ 并清理中间产物
+# make bench-run    在 benchmark/ 里跑完三项测试、输出结果（benchmark/RESULTS.md）、清理运行产物
+bench-build: check-toolchain
+	WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" ./benchmark/build.sh
+
+bench-run: check-runtime
+	WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" ./benchmark/run.sh
+
+bench-clean:
+	rm -f benchmark/RESULTS.md
+
 # ---- 清理构建产物（保留 demo/ 里的成品）----
 clean:
 	$(MAKE) -C wasip1-sqlite clean WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" 2>/dev/null || true
