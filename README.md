@@ -1,6 +1,6 @@
 # wasi-sqlite-redis-nginx
 
-三个经典应用的 WebAssembly/WASI 移植，全部在 [wasmtime](https://wasmtime.dev/) 上实测跑通：
+三个经典应用的 WebAssembly/WASI 移植，全部在 [wasmtime](https://wasmtime.dev/)-v48.0.1 上实测跑通：
 
 | 应用 | 目录 | WASI 版本 | 源码修改 | 说明 |
 |---|---|---|---|---|
@@ -202,7 +202,7 @@ $ make bench-build        # 重新编译基准测试
 |---|---|---|---|
 | `--size 100`（100MB 库） | 2.61s | 4.37s | 1.67x |
 
-结论：开销在所有测试集均匀分布（1.5~2.0x），不随负载规模变化；
+结论：开销在所有测试集均匀分布（1.5~2.0x），不随负载规模变化；WASI 无 fcntl/flock 函数，退化为 dotfile 锁导致性能损失。
 
 ### Redis
 
@@ -238,8 +238,8 @@ wasm 只能用 select（平台限制）。
 
 结论：短连接场景 2.15x，**keepalive 场景存在平台级限制**：
 
-- **p2 的 select() 单次调用 ~1.4ms**（原生 ~2μs，约 700 倍）——wasi-libc 的 select
-   走 poll_oneoff 组件边界，带超时订阅时尤其昂贵
+- **p2 的 select() 单次调用 ~1.4ms**（原生 epoll ~2μs，约 700 倍）—— wasi-libc 的 select
+   走 poll_oneoff 组件边界，无 epoll 函数可用
 
 ## 要求
 
