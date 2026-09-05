@@ -26,9 +26,9 @@
 #   无 daemonize/sentinel/模块加载、无 Lua（EVAL/SCRIPT/FUNCTION）、select 事件循环
 
 HERE      := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-# 工具链：环境变量优先，否则找仓库外 setup.sh 下载的位置
+# wasi-sdk 默认由 setup.sh 下载到仓库外；Wasmtime 默认使用仓库 runtime/ 版本。
 WASI_SDK  ?= $(abspath $(HERE)/../../wasi-sdk-34.0-x86_64-linux)
-WASMTIME  ?= $(abspath $(HERE)/../../wasmtime-v48.0.1-x86_64-linux/wasmtime)
+WASMTIME  ?= $(abspath $(HERE)/../runtime/wasmtime/wasmtime)
 REDIS     := $(HERE)/redis-7.4.11
 SRC       := $(REDIS)/src
 

@@ -20,9 +20,9 @@
 #   无 unix socket 监听、无 epoll（select 后端）、无文件锁语义（flock 相关未用）
 
 HERE      := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-# 工具链：环境变量优先，否则找仓库外 setup.sh 下载的位置
+# wasi-sdk 默认由 setup.sh 下载到仓库外；Wasmtime 默认使用仓库 runtime/ 版本。
 WASI_SDK  ?= $(abspath $(HERE)/../../wasi-sdk-34.0-x86_64-linux)
-WASMTIME  ?= $(abspath $(HERE)/../../wasmtime-v48.0.1-x86_64-linux/wasmtime)
+WASMTIME  ?= $(abspath $(HERE)/../runtime/wasmtime/wasmtime)
 NGINX     := $(HERE)/nginx-1.31.4
 SYSROOT   := $(WASI_SDK)/share/wasi-sysroot
 # 最终产物拷到 out/（objs/ 是 configure 生成的原生构建树，保持不动）

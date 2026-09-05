@@ -1,0 +1,3 @@
+e0b7239223ef8465875551c6402880b8b619b328abbc03b8f8811ae7e1f60426  benchmark/sqlite/speedtest1.wasm
+3d521a45f2c65b6cc770b443bc7a8ee7e0b7feac01a477edc393b0cf75609fb7  benchmark/redis/redis-server.wasm
+e85cfd0f4ffa073eb8aa86fd4bb6a08d6948285303f2bec163c816c41ce0ac71  benchmark/nginx/nginx.wasm

@@ -1,11 +1,10 @@
-# ---- 工具链（setup.sh 下载到仓库外，这里是双保险）----
+# ---- 构建工具链（setup.sh 下载到仓库外，这里是双保险）----
 /wasi-sdk-*/
-/wasmtime-*/
 
 # ---- 各应用构建中间产物与最终产物（编译生成，不提交）----
-wasip1-sqlite/sqlite-autoconf-3530400/
-wasip1-sqlite/sqlite-autoconf-3530400.tar.gz
-wasip1-sqlite/out/
+wasip2-sqlite/sqlite-autoconf-3530400/
+wasip2-sqlite/sqlite-autoconf-3530400.tar.gz
+wasip2-sqlite/out/
 wasip2-redis/wasm-obj/
 wasip2-redis/host-obj/
 wasip2-redis/out/
@@ -24,7 +23,9 @@ demo/nginx/uwsgi_temp/
 demo/nginx/scgi_temp/
 demo/nginx/*.pid
 
-# ---- 通用 ----
+# ---- 通用编译中间文件 ----
+# 该规则只匹配扩展名恰好为 .o 的目标文件，不会匹配 runtime/ 中需要提交的
+# ELF 可执行文件、.so 共享库或 WALI .aot 文件。
 *.o
 *.a
 wasip2-nginx/run/logs/

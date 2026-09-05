@@ -1,12 +1,12 @@
 # wasi-sqlite-redis-nginx/Makefile
 #
-# 三个经典应用的 WebAssembly/WASI 移植：SQLite(p1) / Redis(p2) / Nginx(p2)。
+# 三个经典应用的 WebAssembly/WASI 移植：SQLite(p2) / Redis(p2) / Nginx(p2)。
 # 每个应用的编译细节在各自目录的 Makefile，这里负责编排。
 #
 # 用法:
-#   make setup                 下载工具链到仓库外（wasi-sdk 34 + wasmtime 48）
+#   make setup                 下载构建工具链到仓库外（仅 wasi-sdk 34）
 #   make build                 编译全部三个应用
-#   make build-wasip1-sqlite   只编 SQLite
+#   make build-wasip2-sqlite   只编 SQLite
 #   make build-wasip2-redis    只编 Redis（wasm 服务端）
 #   make build-wasip2-nginx    只编 Nginx
 #   make cli-redis             只编宿主 redis-cli
@@ -16,7 +16,10 @@
 #   make run-demo-nginx        在 demo/nginx 里起 nginx（8080），浏览器/curl 访问
 #   make clean                 清理三个应用的构建产物（保留 demo/ 里的预编译成品）
 #
-# 工具链查找顺序：环境变量 WASI_SDK/WASMTIME > 仓库外默认位置（./setup.sh 下载的目标）
+#   make bench-build           一键编译测试程序，并在 native + 三个运行时上运行全部测试
+#   make bench-run             不重新编译，直接运行全部测试并刷新 benchmark/RESULTS.md
+#
+# wasi-sdk 默认在仓库外；Wasmtime 默认使用仓库 runtime/ 内的固定版本。
 #
 # 工具依赖说明：
 #   编译 wasm 需要 wasi-sdk；运行 wasm 只需要 wasmtime；编译宿主 redis-cli 只需要宿主 cc。
@@ -25,11 +28,12 @@
 HERE      := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 TOOLS     := $(abspath $(HERE)/..)
 WASI_SDK  ?= $(abspath $(TOOLS)/wasi-sdk-34.0-x86_64-linux)
-WASMTIME  ?= $(abspath $(TOOLS)/wasmtime-v48.0.1-x86_64-linux/wasmtime)
+WASMTIME  ?= $(HERE)/runtime/wasmtime/wasmtime
 
-.PHONY: setup setup-runtime check-toolchain check-runtime \
-	build build-wasip1-sqlite build-wasip2-redis build-wasip2-nginx \
-	cli-redis demo-prepare run-demo-sqlite run-demo-redis run-demo-nginx clean
+.PHONY: setup check-toolchain check-runtime check-bench-runtimes \
+	build build-wasip2-sqlite build-wasip2-redis build-wasip2-nginx \
+	cli-redis demo-prepare run-demo-sqlite run-demo-redis run-demo-nginx \
+	bench-build bench-run bench-clean clean
 
 # 编译检查（wasi-sdk）
 check-toolchain:
@@ -37,18 +41,20 @@ check-toolchain:
 
 # 运行检查（wasmtime）
 check-runtime:
-	@test -x "$(WASMTIME)" || { echo "错误: 未找到 wasmtime，请先运行 ./setup.sh --runtime 或设置 WASMTIME"; exit 1; }
+	@test -x "$(WASMTIME)" || { echo "错误: 未找到 runtime/wasmtime/wasmtime"; exit 1; }
+
+# benchmark 使用仓库 runtime/ 内固定版本，避免误用系统上不同版本的运行时。
+check-bench-runtimes:
+	@test -x "$(HERE)/runtime/wasmtime/wasmtime" || { echo "错误: runtime/ 中缺少 Wasmtime"; exit 1; }
+	@test -x "$(HERE)/runtime/wali/iwasm" || { echo "错误: runtime/ 中缺少 WALI"; exit 1; }
+	@test -x "$(HERE)/runtime/wave/wasm2c-runner" || { echo "错误: runtime/ 中缺少 Wave"; exit 1; }
 
 setup:
 	./setup.sh
 
-# 只下载 wasmtime（wasm 产物跨平台，跑 demo 无需编译工具链）
-setup-runtime:
-	./setup.sh --runtime
-
 # ---- 构建 ----
-build-wasip1-sqlite: check-toolchain
-	$(MAKE) -C wasip1-sqlite all WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)"
+build-wasip2-sqlite: check-toolchain
+	$(MAKE) -C wasip2-sqlite all WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)"
 
 build-wasip2-redis: check-toolchain
 	$(MAKE) -C wasip2-redis all WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)"
@@ -61,12 +67,12 @@ cli-redis:
 build-wasip2-nginx: check-toolchain check-runtime
 	$(MAKE) -C wasip2-nginx build WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)"
 
-build: build-wasip1-sqlite build-wasip2-redis build-wasip2-nginx
+build: build-wasip2-sqlite build-wasip2-redis build-wasip2-nginx
 
 # ---- demo：编译并刷新 demo/ 里的成品 ----
 demo-prepare: build cli-redis
 	mkdir -p demo/sqlite demo/redis demo/nginx
-	cp wasip1-sqlite/out/demo.wasm wasip1-sqlite/out/bench.wasm wasip1-sqlite/out/sqlite3.wasm demo/sqlite/
+	cp wasip2-sqlite/out/sqlite3.wasm demo/sqlite/
 	cp wasip2-redis/out/redis-server.wasm wasip2-redis/out/redis-cli demo/redis/
 	cp wasip2-nginx/out/nginx.wasm demo/nginx/
 
@@ -88,19 +94,18 @@ run-demo-nginx: check-runtime
 		nginx.wasm -p . -c conf/nginx.conf
 
 # ---- 基准测试（编译 + 运行；工具见 benchmark/build.sh 与 benchmark/run.sh）----
-# make bench-build  一键编译三应用的测试程序（native+wasm）到 benchmark/ 并清理中间产物
-# make bench-run    在 benchmark/ 里跑完三项测试、输出结果（benchmark/RESULTS.md）、清理运行产物
-bench-build: check-toolchain
+bench-build: check-toolchain check-bench-runtimes
 	WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" ./benchmark/build.sh
+	./benchmark/run.sh
 
-bench-run: check-runtime
-	WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" ./benchmark/run.sh
+bench-run: check-bench-runtimes
+	./benchmark/run.sh
 
 bench-clean:
 	rm -f benchmark/RESULTS.md
 
 # ---- 清理构建产物（保留 demo/ 里的成品）----
 clean:
-	$(MAKE) -C wasip1-sqlite clean WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" 2>/dev/null || true
+	$(MAKE) -C wasip2-sqlite clean WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" 2>/dev/null || true
 	$(MAKE) -C wasip2-redis clean WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" 2>/dev/null || true
 	$(MAKE) -C wasip2-nginx clean WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" 2>/dev/null || true

@@ -1,44 +1,41 @@
 # wasi-sqlite-redis-nginx
 
-三个经典应用的 WebAssembly/WASI 移植，全部在 [wasmtime](https://wasmtime.dev/)-v48.0.1 上实测跑通：
+三个经典应用的 WebAssembly/WASI 移植，全部在 [wasmtime](https://wasmtime.dev/)-v48.0.1、[WALI](https://github.com/Wasm-Thin-Kernel-Interfaces/WALI)、[wave](https://github.com/PLSysSec/wave) 上实测跑通：
 
 | 应用 | 目录 | WASI 版本 | 源码修改 | 说明 |
 |---|---|---|---|---|
-| SQLite 3.53.4 | `wasip1-sqlite/` | preview1 | **零修改**（官方自带 WASI 支持） | 含交互式 CLI |
+| SQLite 3.53.4 | `wasip2-sqlite/` | preview2 | **零修改**（官方自带 WASI 支持） | 含交互式 CLI |
 | Redis 7.4.11 | `wasip2-redis/` | preview2 | 有（`redis.patch`） | 完整 KV/数据结构命令 + AOF 持久化 |
 | Nginx 1.31.4 | `wasip2-nginx/` | preview2 | 有（`nginx.patch`） | 单进程模式，静态文件 + 反向代理 |
 
-- Redis/Nginx 需要 socket，而 `wasi:sockets` 只存在于 preview2，因此用 wasm32-wasip2；
-  SQLite 不需要网络，用官方支持的 preview1。
+- 三个应用统一用 wasm32-wasip2（wasi:sockets 在 preview2；SQLite 不需要网络但也与其余两者统一），使用 wasi-sdk-34.0 编译。
 
 ## 目录结构
 
 ```
-├── Makefile               # 根编排：构建 / demo 准备 / 运行
-├── setup.sh               # 下载工具链到仓库外（wasi-sdk 34 + wasmtime 48）
-├── wasip1-sqlite/         # 源码（官方 tarball 构建时下载）+ Makefile
+wasi-sqlite-redis-nginx
+├── Makefile               # 构建 / demo 准备 / 运行
+├── setup.sh               # 只下载 wasi-sdk 34 到仓库外
+├── wasip2-sqlite/         # 源码（官方 tarball 构建时下载）+ Makefile
 ├── wasip2-redis/          # redis-7.4.11 源码（修改）+ Makefile + redis.patch
 ├── wasip2-nginx/          # nginx-1.31.4 源码（修改）+ Makefile + nginx.patch
-├── benchmark/             # 三个应用的基准测试文件
+├── benchmark/             # 三个应用的基准测试、驱动脚本与结果
+├── runtime/               # Wasmtime、WALI、Wave 的预编译 Linux x86_64 运行时
 └── demo/                  # 预编译成品与测试配置（供演示）
 ```
 
 ## 编译
 
 ```bash
-$ ./setup.sh          # 1) 下载 wasi-sdk 34 + wasmtime 48 到仓库外（../）
+$ ./setup.sh          # 1) 下载 wasi-sdk 34 到仓库外（../）
 $ make build          # 2) 编译三个应用
 $ make demo-prepare   # 3) 把成品拷进 demo/
 ```
 
 ## 演示
 
-wasm 本身是跨平台的，无需再次编译（redis-cli原生可能需要重新编译）：
-
-```bash
-$ ./setup.sh --runtime   # 只下载 wasmtime
-$ make cli-redis         # 重新编译 cli-redis
-```
+Wasmtime 已放在仓库的 `runtime/` 中；运行预编译 demo 不需要执行 `setup.sh`。
+Redis CLI 如需重新构建，可运行 `make cli-redis`。
 
 直接运行 demo（demo/ 已自带编译好的成品）：
 
@@ -172,79 +169,62 @@ Last-Modified: Thu, 27 Aug 2026 11:01:14 GMT
 ## 基准测试
 
 ```bash
-$ make bench-run          # 运行已经编译好的基准测试
-$ make bench-build        # 重新编译基准测试 
+$ make bench-build        # 编译测试程序，运行 native + 三个运行时，输出 RESULTS.md
+$ make bench-run          # 不重新编译，直接运行全部测试并刷新 RESULTS.md
 ```
 
-### SQLite
+测试矩阵固定为 Native、Wasmtime、WALI AOT、Wave AOT（wasmtime JIT 和 AOT 时间并未太大差别），四者使用相同的应用和
+workload：SQLite 官方 `speedtest1 --size 25` 全量测试集；Redis 官方
+`redis-benchmark -n 100000 -c 50` 的 11 类命令；Nginx 的短连接与 keepalive
+ApacheBench 测试。服务端逐个运行，避免并行争抢 CPU。Markdown 表格同时打印到
+终端并写入 `benchmark/RESULTS.md`。
 
-使用 [SQLite 官方 benchmark speedtest1](https://sqlite.org/speed.html)（全量默认测试集，最全面的混合负载：
-插入/索引/查询/ORM/JSON/CTE/浮点/解析/RTree/星型查询/应用场景）。
+仓库内 `runtime/` 已带固定版本的预编译运行时，因此运行 benchmark 不需要另外
+签出改过的 WALI 和 Wave 源码。详细适配与生成方式见 `NOTICE.md`。
 
-`--size 25`（25MB 库）按测试集：
+## SQLite（speedtest1 --size 25，按测试集）
 
-| 测试集 | 原生 | wasm | 比值 |
-|---|---|---|---|
-| main | 0.356s | 0.607s | 1.71x |
-| json | 0.079s | 0.116s | 1.47x |
-| cte | 0.028s | 0.053s | 1.89x |
-| rtree | 0.017s | 0.030s | 1.76x |
-| orm | 0.015s | 0.024s | 1.60x |
-| app | 0.015s | 0.025s | 1.67x |
-| fp | 0.011s | 0.020s | 1.82x |
-| star | 0.006s | 0.012s | 2.00x |
-| parsenumber | 0.004s | 0.006s | 1.50x |
-| **TOTAL** | **0.531s** | **0.893s** | **1.68x** |
+| 测试集 | Native | Wasmtime | WALI AOT | Wave |
+|---|---:|---:|---:|---:|
+| main | 0.363s | 0.611s | 0.558s | 0.491s |
+| orm | 0.015s | 0.024s | 0.022s | 0.020s |
+| cte | 0.030s | 0.054s | 0.045s | 0.038s |
+| json | 0.081s | 0.122s | 0.098s | 0.087s |
+| fp | 0.012s | 0.021s | 0.018s | 0.015s |
+| parsenumber | 0.003s | 0.006s | 0.005s | 0.005s |
+| rtree | 0.017s | 0.030s | 0.026s | 0.022s |
+| star | 0.007s | 0.012s | 0.010s | 0.009s |
+| app | 0.016s | 0.025s | 0.023s | 0.020s |
+| **TOTAL** | **0.544s** | **0.905s** | **0.805s** | **0.707s** |
 
-更大负载：
+## Redis（redis-benchmark -n 100000 -c 50）
 
-| 负载 | 原生 | wasm | 比值 |
-|---|---|---|---|
-| `--size 100`（100MB 库） | 2.61s | 4.37s | 1.67x |
+| 命令 | Native rps | Wasmtime rps | WALI AOT rps | Wave rps |
+|---|---:|---:|---:|---:|
+| SET | 104,493 | 78,802 | 110,375 | 109,409 |
+| GET | 105,042 | 79,114 | 109,409 | 110,619 |
+| INCR | 105,374 | 78,186 | 110,132 | 109,769 |
+| LPUSH | 104,058 | 76,805 | 110,619 | 110,619 |
+| RPUSH | 105,042 | 77,160 | 109,170 | 110,742 |
+| LPOP | 105,597 | 75,358 | 109,649 | 110,742 |
+| RPOP | 105,263 | 76,511 | 109,529 | 110,619 |
+| SADD | 104,493 | 78,064 | 109,529 | 111,235 |
+| HSET | 104,275 | 76,161 | 110,254 | 110,375 |
+| SPOP | 105,263 | 79,177 | 109,890 | 110,742 |
+| MSET (10 keys) | 106,952 | 64,977 | 107,411 | 110,254 |
 
-结论：开销在所有测试集均匀分布（1.5~2.0x），不随负载规模变化；WASI 无 fcntl/flock 函数，退化为 dotfile 锁导致性能损失。
+## Nginx（短连接 -n 50000 -c 50；keepalive -n 20000 -c 128）
 
-### Redis
-
-使用官方 [redis-benchmark](https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/benchmarks/)：
-`-n 100000 -c 50`，两边都是单线程事件循环（原生 io-threads 默认关闭）。
-
-| 命令 | 原生 rps | wasm rps | 比值 |
-|---|---|---|---|
-| SET | 106,724 | 78,401 | 1.36x |
-| GET | 106,157 | 77,851 | 1.36x |
-| INCR | 106,101 | 72,648 | 1.46x |
-| LPUSH / RPUSH | 106,838 / 106,895 | 76,017 / 74,991 | 1.41x / 1.43x |
-| LPOP / RPOP | 106,781 / 106,667 | 76,658 / 76,220 | 1.39x / 1.40x |
-| SADD / SPOP | 105,597 / 105,932 | 77,369 / 79,713 | 1.36x / 1.33x |
-| HSET | 105,988 | 75,614 | 1.40x |
-| MSET（10 keys） | 106,838 | 63,452 | 1.68x |
-| LRANGE 100（一百元素） | 72,543 | 53,850 | 1.35x |
-| LRANGE 500（五百元素） | 23,708 | 22,965 | **1.03x** |
-
-结论：简单命令 wasm 约为原生 **1.3~1.5x**；回复负载越大比值越低（LRANGE 500 已接近 1.0x，
-传输字节数均摊了每请求的固定开销）。
-
-### Nginx
-
-使用 [ApacheBench](https://httpd.apache.org/docs/2.4/programs/ab.html)：`ab -n 50000 -c 50`
-keepalive `ab -n 20000 -c 128 -k`；原生用 epoll，
-wasm 只能用 select（平台限制）。
-
-| 场景 | 原生 rps | wasm rps | 比值 |
-|---|---|---|---|
-| 短连接 | 20,627 | 9,583 | 2.15x |
-| keepalive `-k` | 64,559 | **2,845** | **22.69x** ⚠️ |
-
-结论：短连接场景 2.15x，**keepalive 场景存在平台级限制**：
-
-- **p2 的 select() 单次调用 ~1.4ms**（原生 epoll ~2μs，约 700 倍）—— wasi-libc 的 select
-   走 poll_oneoff 组件边界，无 epoll 函数可用
+| 场景 | Native rps | Wasmtime rps | WALI AOT rps | Wave rps |
+|---|---:|---:|---:|---:|
+| 短连接 | 20,231 | 9,883 | 19,862 | 20,281 |
+| keepalive | 65,163 | 2,845 | 2,898 | 2,902 |
 
 ## 要求
 
 - Linux x86_64；`curl`、`tar`、`cc`（编译宿主 redis-cli 用）、`python3`
-- 工具链通过 `./setup.sh` 获取，或设置环境变量 `WASI_SDK` / `WASMTIME` 指向已有安装
+- wasi-sdk 通过 `./setup.sh` 获取，也可设置 `WASI_SDK`；Wasmtime 默认使用
+  `runtime/wasmtime/wasmtime`，仍可用 `WASMTIME` 覆盖
 
 ## 已知限制
 
