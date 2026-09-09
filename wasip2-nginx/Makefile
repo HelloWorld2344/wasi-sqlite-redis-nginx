@@ -29,10 +29,13 @@ SYSROOT   := $(WASI_SDK)/share/wasi-sysroot
 OUT       := $(HERE)/out/nginx.wasm
 
 WCC       := $(WASI_SDK)/bin/clang
-CC_OPT    := --target=wasm32-wasip2 --sysroot=$(SYSROOT) -O2 -D__wasi__ -D_GNU_SOURCE \
+WASM_OPT_FLAGS ?= -O3 -flto
+CC_OPT    := --target=wasm32-wasip2 --sysroot=$(SYSROOT) $(WASM_OPT_FLAGS) \
+	-D__wasi__ -D_GNU_SOURCE \
 	-D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS -D_WASI_EMULATED_GETPID \
 	-D_WASI_EMULATED_MMAN -I$(HERE)/wasi-include -include $(HERE)/wasi-include/wasi_shims.h
-LD_OPT    := --target=wasm32-wasip2 --sysroot=$(SYSROOT) -L$(SYSROOT)/lib/wasm32-wasip2 \
+LD_OPT    := --target=wasm32-wasip2 --sysroot=$(SYSROOT) $(WASM_OPT_FLAGS) \
+	-L$(SYSROOT)/lib/wasm32-wasip2 \
 	-lwasi-emulated-signal -lwasi-emulated-process-clocks -lwasi-emulated-getpid \
 	-lwasi-emulated-mman
 
@@ -40,7 +43,10 @@ LD_OPT    := --target=wasm32-wasip2 --sysroot=$(SYSROOT) -L$(SYSROOT)/lib/wasm32
 
 all: build
 
-$(NGINX)/objs/Makefile:
+$(NGINX)/objs/Makefile: $(lastword $(MAKEFILE_LIST))
+	# Nginx 对象不把生成的 objs/Makefile 作为依赖；参数变化时先丢弃旧构建树，
+	# 避免 configure 更新后仍把原来的 -O2 对象误判为最新。
+	rm -rf $(NGINX)/objs
 	cd $(NGINX) && NGX_RUNNER="$(WASMTIME) run -S cli" ./auto/configure \
 		--with-cc=$(WCC) --with-debug \
 		--with-cc-opt="$(CC_OPT)" \

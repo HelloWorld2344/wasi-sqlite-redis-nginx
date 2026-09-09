@@ -14,7 +14,7 @@
 - `demo/` 存放预编译成品（wasm/cli/配置），只用于演示运行，**不是构建输出目录**
 - `./setup.sh` 只把 wasi-sdk 34 下载到仓库外；Wasmtime 48、WALI、Wave 的固定
   Linux x86_64 二进制在 `runtime/`，不要再从外部运行时源码树调用 benchmark
-- 根 `Makefile` 负责编排构建与 demo；`make bench-build` 构建 native 对照并运行
+- 根 `Makefile` 负责编排构建与 demo；`make bench-build` 重建 P2、native 对照及两套 AOT 并运行
   完整四路测试，`make bench-run` 直接复用现有测试程序
 
 ## 修改代码时的注意事项

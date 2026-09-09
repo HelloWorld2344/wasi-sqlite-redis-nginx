@@ -35,6 +35,7 @@ SRC       := $(REDIS)/src
 WCC       := $(WASI_SDK)/bin/clang
 SYSROOT   := $(WASI_SDK)/share/wasi-sysroot
 TARGET    := wasm32-wasip2
+WASM_OPT_FLAGS ?= -O3 -flto
 
 OUT_DIR   := $(HERE)/out
 WASM_OUT  := $(OUT_DIR)/redis-server.wasm
@@ -43,7 +44,7 @@ WOBJ      := $(HERE)/wasm-obj
 HOBJ      := $(HERE)/host-obj
 
 # ---- wasm 编译参数 ----
-CFLAGS    := --target=$(TARGET) --sysroot=$(SYSROOT) -O2 \
+CFLAGS    := --target=$(TARGET) --sysroot=$(SYSROOT) $(WASM_OPT_FLAGS) \
 	-D__wasi__ -D_GNU_SOURCE \
 	-D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS -D_WASI_EMULATED_GETPID \
 	-D_WASI_EMULATED_MMAN \
@@ -83,6 +84,9 @@ HIREDIS_SRCS := alloc async hiredis net read sds sockcompat
 WASM_OBJS := $(addprefix $(WOBJ)/,$(addsuffix .o,$(SRV_SRCS))) \
 	$(addprefix $(WOBJ)/hiredis_,$(addsuffix .o,$(HIREDIS_SRCS))) \
 	$(WOBJ)/fpconv_dtoa.o $(WOBJ)/hdr_histogram.o
+
+# 优化参数或其他构建规则变化后，不能复用旧的 Wasm LTO 对象。
+$(WASM_OBJS): $(lastword $(MAKEFILE_LIST))
 
 # ---- 宿主侧对象（REDIS_CLI_OBJ 去掉依赖）+ hiredis/linenoise/hdr ----
 CLI_SRCS  := anet adlist dict redis-cli zmalloc release ae redisassert crcspeed \

@@ -30,8 +30,10 @@ WCC       := $(WASI_SDK)/bin/clang
 WAR       := $(WASI_SDK)/bin/ar
 SYSROOT   := $(WASI_SDK)/share/wasi-sysroot
 TARGET    := wasm32-wasip2
+WASM_OPT_FLAGS ?= -O3 -flto
 
-CFLAGS    := --target=$(TARGET) --sysroot=$(SYSROOT) -O2 -D__wasi__ -D_GNU_SOURCE \
+CFLAGS    := --target=$(TARGET) --sysroot=$(SYSROOT) $(WASM_OPT_FLAGS) \
+	-D__wasi__ -D_GNU_SOURCE \
 	-I$(SQLITE)
 LIBS      := $(SQLITE)/libsqlite3.a -lm
 

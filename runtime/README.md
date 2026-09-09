@@ -1,19 +1,24 @@
 # 预编译 benchmark 运行时
 
-这里保存 `make bench-build` 使用的固定版本 Linux x86_64 运行时，不包含 WALI
-或 Wave 的源代码：
+这里保存 `make bench-build` 使用的固定版本 Linux x86_64 运行时，不包含各运行
+时的源代码：
 
-- `wasmtime/wasmtime`：Wasmtime 48.0.1，直接运行 WASI P2 component；
+- `wasmtime/wasmtime`：Wasmtime 48.0.1（commit `7bac2c277`），使用上游
+  `fastest-runtime` profile 和精简功能集构建，可以直接运行或预编译 WASI P2
+  component；包含 `NOTICE.md` 记录的本地 TCP read/write、单个及批量 pollable
+  fast path 和 P2 accepted socket `TCP_NODELAY` workaround；
 - `wali/iwasm`：WAMR/WALI 2.4.3；`apps/*.aot` 是三个 P2 component 内
-  canonical-ABI core module 的 WALI AOT 产物；
+  canonical-ABI core module 的 WALI AOT 产物；P2 TCP adapter 对 accepted
+  socket 启用 `TCP_NODELAY`；
 - `wave/wasm2c-runner` 与 `wave/libwave.so`：Wave runner/runtime；
   `wave/apps/*.so` 是三个 P2 core module 经 wasm2c AOT 后与 P2 host adapter
-  链接得到的产物。
+  链接得到的产物；Redis/Nginx adapter 对 accepted socket 启用
+  `TCP_NODELAY`。
 
-WALI 和 Wave 的源码改动及 AOT 生成方法记录在仓库根目录的 `NOTICE.md`。运行
-benchmark 不需要相邻的 WALI 或 Wave 源码树。
-`benchmark/` 中提交的三个 P2 文件也是这组 AOT 的固定输入；`bench-build` 构建
-native 对照程序，但不会用可能带不同构建标识的新文件覆盖它们。
+WALI 和 Wave 的源码改动及 AOT 生成方法记录在仓库根目录的 `NOTICE.md`。
+`make bench-run` 不需要相邻的 WALI 或 Wave 源码树。`make bench-build` 则会
+重建三个 P2 component、Native 对照和两套 AOT，全部成功后替换这里的
+产物并刷新 `APPS.sha256`。
 
 这些本机代码产物面向 Linux x86_64。更换应用 `.wasm`、目标架构或 SQLite
 `--size` 等编译进 Wave adapter 的参数后，需要使用 `NOTICE.md` 所列源码构建

@@ -25,7 +25,7 @@ REDIS_CLIENTS=50
 NGINX_REQUESTS=50000
 NGINX_CLIENTS=50
 NGINX_KEEPALIVE_REQUESTS=20000
-NGINX_KEEPALIVE_CLIENTS=128
+NGINX_KEEPALIVE_CLIENTS=120
 
 clean_benchmark_state() {
     rm -f "$HERE/sqlite"/speedtest1.db* "$HERE/sqlite"/*.lock
@@ -49,6 +49,17 @@ trap cleanup EXIT INT TERM
 
 need_exec() { [ -x "$1" ] || { echo "错误: 缺少可执行文件 $1" >&2; exit 1; }; }
 need_file() { [ -f "$1" ] || { echo "错误: 缺少文件 $1" >&2; exit 1; }; }
+run_capture() {
+    local label="$1" output="$2" error="$3"
+    shift 3
+    "$@" >"$output" 2>"$error" || {
+        local rc=$?
+        echo "错误: $label 退出（code=$rc）" >&2
+        [ ! -s "$error" ] || sed -n '1,120p' "$error" >&2
+        [ ! -s "$output" ] || { echo "--- 标准输出末尾 ---" >&2; tail -40 "$output" >&2; }
+        return "$rc"
+    }
+}
 for f in "$WASMTIME" "$IWASM" "$WAVE_RUNNER" "$AB" \
          "$HERE/sqlite/speedtest1-native" "$HERE/redis/redis-server-native" \
          "$HERE/redis/redis-benchmark" "$HERE/nginx/nginx-native"; do
@@ -126,14 +137,15 @@ printf '同一份应用、同一组参数；服务端测试逐个运行，避免
 echo "=== SQLite: speedtest1 --size $SQLITE_SIZE（按测试集）==="
 (
     cd "$HERE/sqlite"
-    ./speedtest1-native --size "$SQLITE_SIZE" >"$WORK/sqlite-native.txt"
-    "$WASMTIME" run -S cli --dir=. speedtest1.wasm --size "$SQLITE_SIZE" \
-        >"$WORK/sqlite-wasmtime.txt"
-    "$IWASM" -f 'wasi:cli/run@0.2.12#run' "$WALI_APPS/sqlite.aot" \
-        --size "$SQLITE_SIZE" >"$WORK/sqlite-wali.txt"
-    LD_LIBRARY_PATH="$WAVE_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-        "$WAVE_RUNNER" "$WAVE_APPS/sqlite.so" --homedir=. \
-        >"$WORK/sqlite-wave.txt"
+    run_capture "Native SQLite" "$WORK/sqlite-native.txt" "$WORK/sqlite-native.err" \
+        ./speedtest1-native --size "$SQLITE_SIZE"
+    run_capture "Wasmtime SQLite" "$WORK/sqlite-wasmtime.txt" "$WORK/sqlite-wasmtime.err" \
+        "$WASMTIME" run -S cli --dir=. speedtest1.wasm --size "$SQLITE_SIZE"
+    run_capture "WALI SQLite" "$WORK/sqlite-wali.txt" "$WORK/sqlite-wali.err" \
+        "$IWASM" -f 'wasi:cli/run@0.2.12#run' "$WALI_APPS/sqlite.aot" --size "$SQLITE_SIZE"
+    run_capture "Wave SQLite" "$WORK/sqlite-wave.txt" "$WORK/sqlite-wave.err" \
+        env LD_LIBRARY_PATH="$WAVE_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+        "$WAVE_RUNNER" "$WAVE_APPS/sqlite.so" --homedir=.
 )
 python3 - "$WORK" "$RESULTS" "$SQLITE_SIZE" <<'PYEOF'
 import re, sys

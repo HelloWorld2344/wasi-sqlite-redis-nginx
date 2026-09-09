@@ -29,8 +29,15 @@ HERE      := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 TOOLS     := $(abspath $(HERE)/..)
 WASI_SDK  ?= $(abspath $(TOOLS)/wasi-sdk-34.0-x86_64-linux)
 WASMTIME  ?= $(HERE)/runtime/wasmtime/wasmtime
+WALI_ROOT ?= $(TOOLS)/WALI
+WAVE_ROOT ?= $(TOOLS)/wave
+WASM_TOOLS ?= $(TOOLS)/.wasm-tools/bin/wasm-tools
+WAMRC     ?= $(WALI_ROOT)/build/wamr/wamrc-system/wamrc
+# 三个 P2 应用统一使用相同的优化级别；子 Makefile 会把该变量加入编译和链接。
+WASM_OPT_FLAGS ?= -O3 -flto
+NATIVE_OPT_FLAGS ?= -O3 -flto
 
-.PHONY: setup check-toolchain check-runtime check-bench-runtimes \
+.PHONY: setup check-toolchain check-runtime check-bench-runtimes check-bench-aot-tools \
 	build build-wasip2-sqlite build-wasip2-redis build-wasip2-nginx \
 	cli-redis demo-prepare run-demo-sqlite run-demo-redis run-demo-nginx \
 	bench-build bench-run bench-clean clean
@@ -49,15 +56,26 @@ check-bench-runtimes:
 	@test -x "$(HERE)/runtime/wali/iwasm" || { echo "错误: runtime/ 中缺少 WALI"; exit 1; }
 	@test -x "$(HERE)/runtime/wave/wasm2c-runner" || { echo "错误: runtime/ 中缺少 Wave"; exit 1; }
 
+# bench-build 会随新 P2 component 同步重建两套 AOT；bench-run 仍只需 runtime/ 中的成品。
+check-bench-aot-tools:
+	@test -x "$(WASM_TOOLS)" || { echo "错误: 未找到 wasm-tools: $(WASM_TOOLS)"; exit 1; }
+	@test -x "$(WAMRC)" || { echo "错误: 未找到 WALI AOT 编译器: $(WAMRC)"; exit 1; }
+	@test -f "$(WAVE_ROOT)/examples/speedtest1-p2/Makefile" || { echo "错误: 未找到 Wave 源码树: $(WAVE_ROOT)"; exit 1; }
+	@test -f "$(WAVE_ROOT)/examples/redis-p2/Makefile" || { echo "错误: Wave 缺少 redis-p2 适配"; exit 1; }
+	@test -f "$(WAVE_ROOT)/examples/nginx-p2/Makefile" || { echo "错误: Wave 缺少 nginx-p2 适配"; exit 1; }
+	@test -x "$(WAVE_ROOT)/tools/wasm2c_sandbox_compiler/bin/wasm2c-runner" || { echo "错误: Wave 缺少 wasm2c-runner"; exit 1; }
+
 setup:
 	./setup.sh
 
 # ---- 构建 ----
 build-wasip2-sqlite: check-toolchain
-	$(MAKE) -C wasip2-sqlite all WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)"
+	$(MAKE) -C wasip2-sqlite all WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" \
+		WASM_OPT_FLAGS="$(WASM_OPT_FLAGS)"
 
 build-wasip2-redis: check-toolchain
-	$(MAKE) -C wasip2-redis all WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)"
+	$(MAKE) -C wasip2-redis all WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" \
+		WASM_OPT_FLAGS="$(WASM_OPT_FLAGS)"
 
 # 原生二进制：只需要宿主 cc，不需要任何 wasm 工具
 cli-redis:
@@ -65,7 +83,8 @@ cli-redis:
 
 # nginx configure 的交叉探测用 wasmtime 执行测试程序 → 编译时两者都要
 build-wasip2-nginx: check-toolchain check-runtime
-	$(MAKE) -C wasip2-nginx build WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)"
+	$(MAKE) -C wasip2-nginx build WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" \
+		WASM_OPT_FLAGS="$(WASM_OPT_FLAGS)"
 
 build: build-wasip2-sqlite build-wasip2-redis build-wasip2-nginx
 
@@ -94,8 +113,13 @@ run-demo-nginx: check-runtime
 		nginx.wasm -p . -c conf/nginx.conf
 
 # ---- 基准测试（编译 + 运行；工具见 benchmark/build.sh 与 benchmark/run.sh）----
-bench-build: check-toolchain check-bench-runtimes
-	WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" ./benchmark/build.sh
+bench-build: check-toolchain check-bench-runtimes check-bench-aot-tools
+	$(MAKE) build WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" \
+		WASM_OPT_FLAGS="$(WASM_OPT_FLAGS)"
+	WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" \
+		WASM_OPT_FLAGS="$(WASM_OPT_FLAGS)" NATIVE_OPT_FLAGS="$(NATIVE_OPT_FLAGS)" \
+		WALI_ROOT="$(WALI_ROOT)" WAVE_ROOT="$(WAVE_ROOT)" \
+		WASM_TOOLS="$(WASM_TOOLS)" WAMRC="$(WAMRC)" ./benchmark/build.sh
 	./benchmark/run.sh
 
 bench-run: check-bench-runtimes
