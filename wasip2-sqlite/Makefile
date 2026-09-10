@@ -1,6 +1,6 @@
 # wasip2-sqlite/Makefile
 #
-# SQLite 3.53.4 → wasm32-wasip2（WASI preview2；SQLite 源码零修改）。
+# SQLite 3.53.4 → wasm32-wasip2（WASI preview2；应用 Wasm-only VDBE/memcmp 性能补丁）。
 # 源码不随仓库分发：构建时从 sqlite.org 下载官方 autoconf 包（含预生成的
 # sqlite3.c，不需要 tclsh；GitHub 镜像树没有这个文件，不能替代）。
 #
@@ -17,7 +17,7 @@
 #   2) wasip2 需要一组官方模拟库（信号/进程时钟/getpid/mman）
 #   3) 运行必须 -S cli（p2 模块的 WASI 接口）
 #   4) sqlite 官方 configure 的 wasi-sdk 模式目标三元组是 p1，这里用
-#      CFLAGS 覆盖 + SHELL_DEFS 直接编译 sqlite3.c（同样的零修改源码）
+#      CFLAGS 覆盖 + SHELL_DEFS 直接编译打过补丁的 sqlite3.c
 
 HERE      := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 WASI_SDK  ?= $(abspath $(HERE)/../../wasi-sdk-34.0-x86_64-linux)
@@ -25,6 +25,7 @@ WASMTIME  ?= $(abspath $(HERE)/../runtime/wasmtime/wasmtime)
 SQLITE    := $(HERE)/sqlite-autoconf-3530400
 SQLITE_TAR:= $(HERE)/sqlite-autoconf-3530400.tar.gz
 SQLITE_URL:= https://sqlite.org/2026/sqlite-autoconf-3530400.tar.gz
+SQLITE_PATCH := $(HERE)/sqlite-wasm-vdbe-noinline.patch
 
 WCC       := $(WASI_SDK)/bin/clang
 WAR       := $(WASI_SDK)/bin/ar
@@ -59,10 +60,11 @@ SHIMS     := $(HERE)/shell-shims.c
 
 all: sqlite cli
 
-# ---- 0) 源码：官方 autoconf 包（sqlite.org 慢，断点续传；SQLite 源码零修改）----
-$(SQLITE)/sqlite3.c:
+# ---- 0) 源码：官方 autoconf 包 + 可重放的 Wasm-only VDBE/memcmp 补丁 ----
+$(SQLITE)/sqlite3.c: $(SQLITE_PATCH)
 	curl -sC - --retry 5 -o $(SQLITE_TAR) $(SQLITE_URL)
 	cd $(HERE) && tar xzf $(SQLITE_TAR)
+	cd $(SQLITE) && patch -p1 < $(SQLITE_PATCH)
 
 # ---- 1) 编译 WASI 静态库（sqlite3.c 直接用 wasip2 参数编译）----
 sqlite: $(LIB)

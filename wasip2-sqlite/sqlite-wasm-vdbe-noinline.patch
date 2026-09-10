@@ -1,0 +1,254 @@
+--- a/sqlite3.c
++++ b/sqlite3.c
+@@ -15042,6 +15042,19 @@
+ #if defined(SQLITE_COVERAGE_TEST) || defined(__STRICT_ANSI__)
+ # undef SQLITE_INLINE
+ # define SQLITE_INLINE
++#endif
++
++/*
++** LLVM's source-profile LTO can inline the shutdown path into
++** sqlite3VdbeExec() when targeting WebAssembly.  That makes the already
++** large opcode switch harder for the Wasm backend to allocate and causes
++** excessive spill/reload traffic in Wasmtime's generated machine code.
++** Keep this call boundary for Wasm while leaving native builds unchanged.
++*/
++#if defined(__wasm__)
++# define SQLITE_WASM_VDBE_NOINLINE SQLITE_NOINLINE
++#else
++# define SQLITE_WASM_VDBE_NOINLINE
+ #endif
+ 
+ /*
+@@ -15893,6 +15906,39 @@
+ typedef INT16_TYPE i16;            /* 2-byte signed integer */
+ typedef UINT8_TYPE u8;             /* 1-byte unsigned integer */
+ typedef INT8_TYPE i8;              /* 1-byte signed integer */
++
++
++/* WASM linear memory is little-endian. Compare complete words only inside
++** the requested range; memcpy permits unaligned accesses without aliasing UB.
++** Return the unsigned-byte difference at the first mismatch, as memcmp does.
++*/
++#if defined(__wasm__)
++static SQLITE_NOINLINE int sqlite3WasmMemcmp(
++  const void *pLeft, const void *pRight, size_t n
++){
++  const unsigned char *a = (const unsigned char*)pLeft;
++  const unsigned char *b = (const unsigned char*)pRight;
++  while( n>=8 ){
++    u64 x, y;
++    memcpy(&x, a, 8);
++    memcpy(&y, b, 8);
++    if( x!=y ){
++      unsigned shift = (unsigned)__builtin_ctzll(x^y) & ~7u;
++      return (int)((x>>shift)&255) - (int)((y>>shift)&255);
++    }
++    a += 8;
++    b += 8;
++    n -= 8;
++  }
++  while( n-- ){
++    int diff = (int)*a++ - (int)*b++;
++    if( diff ) return diff;
++  }
++  return 0;
++}
++#define memcmp(a,b,n) __builtin_choose_expr(__builtin_constant_p(n), \
++  __builtin_memcmp((a),(b),(n)), sqlite3WasmMemcmp((a),(b),(n)))
++#endif
+ 
+ /* A bitfield type for use inside of structures.  Always follow with :N where
+ ** N is the number of bits.
+@@ -72907,6 +72953,14 @@
+ /*
+ ** Routines to read or write a two- and four-byte big-endian integer values.
+ */
++#if defined(__wasm__)
++/* Read exactly two bytes, including at unaligned addresses. */
++static inline u32 sqlite3WasmGet2byte(const unsigned char *p){
++  u16 v;
++  __builtin_memcpy(&v, p, sizeof(v));
++  return __builtin_bswap16(v);
++}
++#endif
+ #define get2byte(x)   ((x)[0]<<8 | (x)[1])
+ #define put2byte(p,v) ((p)[0] = (u8)((v)>>8), (p)[1] = (u8)(v))
+ #define get4byte sqlite3Get4byte
+@@ -72917,7 +72971,9 @@
+ ** two-byte aligned address.  get2byteAligned() is only used for accessing the
+ ** cell addresses in a btree header.
+ */
+-#if SQLITE_BYTEORDER==4321
++#if defined(__wasm__)
++# define get2byteAligned(x) sqlite3WasmGet2byte(x)
++#elif SQLITE_BYTEORDER==4321
+ # define get2byteAligned(x)  (*(u16*)(x))
+ #elif SQLITE_BYTEORDER==1234 && GCC_VERSION>=4008000
+ # define get2byteAligned(x)  __builtin_bswap16(*(u16*)(x))
+@@ -79186,6 +79242,24 @@
+ ** This routine is part of an optimization.  It is always safe to return
+ ** a positive value as that will cause the optimization to be skipped.
+ */
++#if defined(__wasm__)
++static int vdbeRecordCompareInt(int, const void*, UnpackedRecord*);
++static int vdbeRecordCompareString(int, const void*, UnpackedRecord*);
++/* The selected comparator usually has one of these two known targets.
++** A direct call avoids Wasm table lookup and signature checks. */
++static SQLITE_INLINE int sqlite3WasmRecordCompare(
++  RecordCompare xCompare, int nKey, const void *pKey, UnpackedRecord *pRecord
++){
++  if( xCompare==vdbeRecordCompareInt ){
++    return vdbeRecordCompareInt(nKey, pKey, pRecord);
++  }
++  if( xCompare==vdbeRecordCompareString ){
++    return vdbeRecordCompareString(nKey, pKey, pRecord);
++  }
++  return xCompare(nKey, pKey, pRecord);
++}
++#endif
++
+ static int indexCellCompare(
+   MemPage *pPage,
+   int idx,
+@@ -79202,14 +79276,24 @@
+     ** single byte varint and the record fits entirely on the main
+     ** b-tree page.  */
+     if( pCell + nCell >= pPage->aDataEnd ) return 99;
++    
++#if defined(__wasm__)
++    c = sqlite3WasmRecordCompare(xRecordCompare, nCell, (void*)&pCell[1], pIdxKey);
++#else
+     c = xRecordCompare(nCell, (void*)&pCell[1], pIdxKey);
++#endif
+   }else if( !(pCell[1] & 0x80)
+     && (nCell = ((nCell&0x7f)<<7) + pCell[1])<=pPage->maxLocal
+   ){
+     /* The record-size field is a 2 byte varint and the record
+     ** fits entirely on the main b-tree page.  */
+     if( pCell + nCell >= pPage->aDataEnd ) return 99;
++    
++#if defined(__wasm__)
++    c = sqlite3WasmRecordCompare(xRecordCompare, nCell, (void*)&pCell[2], pIdxKey);
++#else
+     c = xRecordCompare(nCell, (void*)&pCell[2], pIdxKey);
++#endif
+   }else{
+     /* If the record extends into overflow pages, do not attempt
+     ** the optimization. */
+@@ -79374,14 +79458,24 @@
+           rc = SQLITE_CORRUPT_PAGE(pPage);
+           goto moveto_index_finish;
+         }
+-        c = xRecordCompare(nCell, (void*)&pCell[1], pIdxKey);
++        
++#if defined(__wasm__)
++    c = sqlite3WasmRecordCompare(xRecordCompare, nCell, (void*)&pCell[1], pIdxKey);
++#else
++    c = xRecordCompare(nCell, (void*)&pCell[1], pIdxKey);
++#endif
+       }else if( !(pCell[1] & 0x80)
+         && (nCell = ((nCell&0x7f)<<7) + pCell[1])<=pPage->maxLocal
+         && pCell + nCell < pPage->aDataEnd
+       ){
+         /* The record-size field is a 2 byte varint and the record
+         ** fits entirely on the main b-tree page.  */
+-        c = xRecordCompare(nCell, (void*)&pCell[2], pIdxKey);
++        
++#if defined(__wasm__)
++    c = sqlite3WasmRecordCompare(xRecordCompare, nCell, (void*)&pCell[2], pIdxKey);
++#else
++    c = xRecordCompare(nCell, (void*)&pCell[2], pIdxKey);
++#endif
+       }else{
+         /* The record flows over onto one or more overflow pages. In
+         ** this case the whole cell needs to be parsed, a buffer allocated
+@@ -91186,7 +91280,7 @@
+ ** lock contention, return SQLITE_BUSY.  If SQLITE_BUSY is returned, it
+ ** means the close did not happen and needs to be repeated.
+ */
+-SQLITE_PRIVATE int sqlite3VdbeHalt(Vdbe *p){
++SQLITE_PRIVATE int SQLITE_WASM_VDBE_NOINLINE sqlite3VdbeHalt(Vdbe *p){
+   int rc;                         /* Used to store transient return codes */
+   sqlite3 *db = p->db;
+ 
+@@ -97446,6 +97540,35 @@
+ }
+ 
+ /*
++** Keep OP_OpenDup's cursor-allocation call chain out of sqlite3VdbeExec on
++** WebAssembly. Native builds may inline this helper as before.
++*/
++static int SQLITE_WASM_VDBE_NOINLINE vdbeExecOpenDup(Vdbe *p, Op *pOp){
++  VdbeCursor *pOrig;
++  VdbeCursor *pCx;
++  int rc;
++
++  pOrig = p->apCsr[pOp->p2];
++  assert( pOrig );
++  assert( pOrig->isEphemeral );
++  pCx = allocateCursor(p, pOp->p1, pOrig->nField, CURTYPE_BTREE);
++  if( pCx==0 ) return SQLITE_NOMEM;
++  pCx->nullRow = 1;
++  pCx->isEphemeral = 1;
++  pCx->pKeyInfo = pOrig->pKeyInfo;
++  pCx->isTable = pOrig->isTable;
++  pCx->pgnoRoot = pOrig->pgnoRoot;
++  pCx->isOrdered = pOrig->isOrdered;
++  pCx->ub.pBtx = pOrig->ub.pBtx;
++  pCx->noReuse = 1;
++  pOrig->noReuse = 1;
++  rc = sqlite3BtreeCursor(pCx->ub.pBtx, pCx->pgnoRoot, BTREE_WRCSR,
++                          pCx->pKeyInfo, pCx->uc.pCursor);
++  assert( rc==SQLITE_OK );
++  return rc;
++}
++
++/*
+ ** Execute as much of a VDBE program as we can.
+ ** This is the core of sqlite3_step().
+ */
+@@ -101084,26 +101207,8 @@
+ ** Duplicate ephemeral cursors are used for self-joins of materialized views.
+ */
+ case OP_OpenDup: {           /* ncycle */
+-  VdbeCursor *pOrig;    /* The original cursor to be duplicated */
+-  VdbeCursor *pCx;      /* The new cursor */
+-
+-  pOrig = p->apCsr[pOp->p2];
+-  assert( pOrig );
+-  assert( pOrig->isEphemeral );  /* Only ephemeral cursors can be duplicated */
+-
+-  pCx = allocateCursor(p, pOp->p1, pOrig->nField, CURTYPE_BTREE);
+-  if( pCx==0 ) goto no_mem;
+-  pCx->nullRow = 1;
+-  pCx->isEphemeral = 1;
+-  pCx->pKeyInfo = pOrig->pKeyInfo;
+-  pCx->isTable = pOrig->isTable;
+-  pCx->pgnoRoot = pOrig->pgnoRoot;
+-  pCx->isOrdered = pOrig->isOrdered;
+-  pCx->ub.pBtx = pOrig->ub.pBtx;
+-  pCx->noReuse = 1;
+-  pOrig->noReuse = 1;
+-  rc = sqlite3BtreeCursor(pCx->ub.pBtx, pCx->pgnoRoot, BTREE_WRCSR,
+-                          pCx->pKeyInfo, pCx->uc.pCursor);
++  rc = vdbeExecOpenDup(p, pOp);
++  if( rc==SQLITE_NOMEM ) goto no_mem;
+   /* The sqlite3BtreeCursor() routine can only fail for the first cursor
+   ** opened for a database.  Since there is already an open cursor when this
+   ** opcode is run, the sqlite3BtreeCursor() cannot fail */
+@@ -134737,7 +134842,14 @@
+           zStop[1] = 0;
+         }
+         while(1){
++#if defined(__wasm__)
++          /* zStop has at most two ASCII bytes here. Avoid constructing a
++          ** general strcspn character table for every LIKE/GLOB candidate. */
++          while( *zString && *zString!=(u8)zStop[0]
++                 && *zString!=(u8)zStop[1] ) zString++;
++#else
+           zString += strcspn((const char*)zString, zStop);
++#endif
+           if( zString[0]==0 ) break;
+           zString++;
+           bMatch = patternCompare(zPattern,zString,pInfo,matchOther);

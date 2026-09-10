@@ -7,6 +7,17 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$HERE")"
 RUNTIME="$ROOT/runtime"
 WASMTIME="$RUNTIME/wasmtime/wasmtime"
+WASMTIME_BACKEND="${WASMTIME_BACKEND:-llvm}"
+case "$WASMTIME_BACKEND" in
+    llvm) WASMTIME_LABEL="Wasmtime LLVM AOT" ;;
+    cranelift) WASMTIME_LABEL="Wasmtime Cranelift" ;;
+    *) echo "错误: WASMTIME_BACKEND 必须是 llvm 或 cranelift" >&2; exit 1 ;;
+esac
+export WASMTIME_LABEL
+WASMTIME_RUN=()
+WASMTIME_SQLITE="$HERE/sqlite/speedtest1.wasm"
+WASMTIME_REDIS="$HERE/redis/redis-server.wasm"
+WASMTIME_NGINX="$HERE/nginx/nginx.wasm"
 IWASM="$RUNTIME/wali/iwasm"
 WALI_APPS="$RUNTIME/wali/apps"
 WAVE_RUNNER="$RUNTIME/wave/wasm2c-runner"
@@ -77,6 +88,22 @@ done
     echo "请按 NOTICE.md 重新生成 runtime/wali/apps 和 runtime/wave/apps" >&2
     exit 1
 }
+# Prepare all AOTs before any timing/server activity. The cache is bound to
+# the runtime, compiler flags, exact P2 bytes and the generated AOT hash.
+echo "=== $WASMTIME_LABEL: $WASMTIME ==="
+if [ "$WASMTIME_BACKEND" = llvm ]; then
+    WASMTIME_RUN=(--allow-precompiled -C cranelift-llvm-backend=true -C cranelift-sse41)
+    # Explicit CLI scheduling mode; opt out to compare the original Tokio driver.
+    if [ "${WASMTIME_IO_CURRENT_THREAD:-1}" = 1 ]; then
+        WASMTIME_RUN+=(--io-current-thread)
+    fi
+    llvm_aot() {
+        python3 "$HERE/wasmtime-llvm-aot.py" "$WASMTIME" "$1" "$ROOT/.cache/wasmtime-llvm"
+    }
+    WASMTIME_SQLITE=$(llvm_aot "$WASMTIME_SQLITE")
+    WASMTIME_REDIS=$(llvm_aot "$WASMTIME_REDIS")
+    WASMTIME_NGINX=$(llvm_aot "$WASMTIME_NGINX")
+fi
 clean_benchmark_state
 
 start_server() {
@@ -130,6 +157,7 @@ wait_port() {
 : >"$RESULTS"
 printf '# WASI P2 benchmark 结果\n\n' >>"$RESULTS"
 printf '同一份应用、同一组参数；服务端测试逐个运行，避免相互争抢 CPU。\n' >>"$RESULTS"
+printf '\nWasmtime 后端：%s。LLVM AOT 编译在测试前完成，不计入运行耗时。\n' "$WASMTIME_LABEL" >>"$RESULTS"
 
 ############################################
 # SQLite
@@ -140,7 +168,7 @@ echo "=== SQLite: speedtest1 --size $SQLITE_SIZE（按测试集）==="
     run_capture "Native SQLite" "$WORK/sqlite-native.txt" "$WORK/sqlite-native.err" \
         ./speedtest1-native --size "$SQLITE_SIZE"
     run_capture "Wasmtime SQLite" "$WORK/sqlite-wasmtime.txt" "$WORK/sqlite-wasmtime.err" \
-        "$WASMTIME" run -S cli --dir=. speedtest1.wasm --size "$SQLITE_SIZE"
+        "$WASMTIME" run "${WASMTIME_RUN[@]}" -S cli --dir=. "$WASMTIME_SQLITE" --size "$SQLITE_SIZE"
     run_capture "WALI SQLite" "$WORK/sqlite-wali.txt" "$WORK/sqlite-wali.err" \
         "$IWASM" -f 'wasi:cli/run@0.2.12#run' "$WALI_APPS/sqlite.aot" --size "$SQLITE_SIZE"
     run_capture "Wave SQLite" "$WORK/sqlite-wave.txt" "$WORK/sqlite-wave.err" \
@@ -148,7 +176,7 @@ echo "=== SQLite: speedtest1 --size $SQLITE_SIZE（按测试集）==="
         "$WAVE_RUNNER" "$WAVE_APPS/sqlite.so" --homedir=.
 )
 python3 - "$WORK" "$RESULTS" "$SQLITE_SIZE" <<'PYEOF'
-import re, sys
+import os, re, sys
 work, results, size = sys.argv[1:]
 def parse(path):
     out = open(path, errors="replace").read()
@@ -166,7 +194,7 @@ def parse(path):
     return {"main": total - sum(sets.values()), **sets}, total
 files = ["native", "wasmtime", "wali", "wave"]
 parsed = [parse(f"{work}/sqlite-{name}.txt") for name in files]
-rows = ["| 测试集 | Native | Wasmtime | WALI AOT | Wave |",
+rows = [f"| 测试集 | Native | {os.environ['WASMTIME_LABEL']} | WALI AOT | Wave |",
         "|---|---:|---:|---:|---:|"]
 for testset in parsed[0][0]:
     vals = [p[0][testset] for p in parsed]
@@ -201,9 +229,9 @@ run_redis_case() {
 
 run_redis_case native "$HERE/redis/redis-server-native" \
     --port "$REDIS_PORT" --save '' --appendonly no
-run_redis_case wasmtime "$WASMTIME" run -W max-wasm-stack=8388608 \
+run_redis_case wasmtime "$WASMTIME" run "${WASMTIME_RUN[@]}" -W max-wasm-stack=8388608 \
     -S cli -S inherit-network=y --dir="$HERE/redis" --env HOME="$HOME" \
-    "$HERE/redis/redis-server.wasm" --port "$REDIS_PORT" --save '' --appendonly no
+    "$WASMTIME_REDIS" --port "$REDIS_PORT" --save '' --appendonly no
 run_redis_case wali "$IWASM" -f 'wasi:cli/run@0.2.12#run' \
     "$WALI_APPS/redis.aot" --port "$REDIS_PORT" --save '' --appendonly no
 echo "  -> wave"
@@ -217,7 +245,7 @@ wait_port "$REDIS_PORT" "Wave Redis" "$WORK/redis-wave-server.log"
 stop_server
 
 python3 - "$WORK" "$RESULTS" "$REDIS_REQUESTS" "$REDIS_CLIENTS" <<'PYEOF'
-import re, sys
+import os, re, sys
 work, results, requests, clients = sys.argv[1:]
 def parse(name):
     out = {}
@@ -227,7 +255,7 @@ def parse(name):
     return out
 data = [parse(name) for name in ["native", "wasmtime", "wali", "wave"]]
 if not all(data): raise SystemExit("Redis benchmark 输出不完整")
-rows = ["| 命令 | Native rps | Wasmtime rps | WALI AOT rps | Wave rps |",
+rows = [f"| 命令 | Native rps | {os.environ['WASMTIME_LABEL']} rps | WALI AOT rps | Wave rps |",
         "|---|---:|---:|---:|---:|"]
 for cmd in data[0]:
     rows.append("| " + cmd + " | " + " | ".join(f"{d[cmd]:,.0f}" for d in data) + " |")
@@ -277,9 +305,9 @@ run_nginx_case() {
 run_nginx_case native 8083 "$HERE/nginx/native-conf" \
     "$HERE/nginx/nginx-native" -p . -c nginx.conf
 run_nginx_case wasmtime 8082 "$HERE/nginx/wasm-conf" \
-    "$WASMTIME" run -W max-wasm-stack=8388608 -S cli -S inherit-network=y \
+    "$WASMTIME" run "${WASMTIME_RUN[@]}" -W max-wasm-stack=8388608 -S cli -S inherit-network=y \
     -S allow-ip-name-lookup=y --dir=. --env HOME="$HOME" \
-    "$HERE/nginx/nginx.wasm" -p . -c nginx.conf
+    "$WASMTIME_NGINX" -p . -c nginx.conf
 run_nginx_case wali 8082 "$HERE/nginx/wasm-conf" \
     "$IWASM" -f 'wasi:cli/run@0.2.12#run' "$WALI_APPS/nginx.aot" -p . -c nginx.conf
 run_nginx_case wave 8082 "$HERE/nginx/wasm-conf" \
@@ -288,7 +316,7 @@ run_nginx_case wave 8082 "$HERE/nginx/wasm-conf" \
 
 python3 - "$WORK" "$RESULTS" "$NGINX_REQUESTS" "$NGINX_CLIENTS" \
     "$NGINX_KEEPALIVE_REQUESTS" "$NGINX_KEEPALIVE_CLIENTS" <<'PYEOF'
-import re, sys
+import os, re, sys
 work, results, nr, nc, kr, kc = sys.argv[1:]
 def rps(name, scenario):
     text = open(f"{work}/nginx-{name}-{scenario}.txt", errors="replace").read()
@@ -296,7 +324,7 @@ def rps(name, scenario):
     if not m: raise SystemExit(f"无法解析 Nginx 输出: {name}/{scenario}")
     return float(m.group(1))
 names = ["native", "wasmtime", "wali", "wave"]
-rows = ["| 场景 | Native rps | Wasmtime rps | WALI AOT rps | Wave rps |",
+rows = [f"| 场景 | Native rps | {os.environ['WASMTIME_LABEL']} rps | WALI AOT rps | Wave rps |",
         "|---|---:|---:|---:|---:|",
         "| 短连接 | " + " | ".join(f"{rps(n, 'short'):,.0f}" for n in names) + " |",
         "| keepalive | " + " | ".join(f"{rps(n, 'keepalive'):,.0f}" for n in names) + " |"]

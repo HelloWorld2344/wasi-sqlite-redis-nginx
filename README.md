@@ -170,14 +170,21 @@ Last-Modified: Thu, 27 Aug 2026 11:01:14 GMT
 
 ```bash
 $ make bench-build        # 重建 P2/native/两套 AOT，运行四路测试，输出 RESULTS.md
-$ make bench-run          # 不重新编译，直接运行全部测试并刷新 RESULTS.md
+$ make bench-run          # 默认 LLVM：生成/复用 AOT 后运行全部测试
+$ make bench-run WASMTIME_BACKEND=cranelift  # 使用原 Cranelift 路径
 ```
 
-测试矩阵固定为 Native、Wasmtime、WALI AOT、Wave AOT（wasmtime JIT 和 AOT 时间并未太大差别），四者使用相同的应用和
+测试矩阵为 Native、Wasmtime LLVM AOT（可切换 Cranelift）、WALI AOT、Wave AOT，四者使用相同的应用和
 workload：SQLite 官方 `speedtest1 --size 25` 全量测试集；Redis 官方
 `redis-benchmark -n 100000 -c 50` 的 11 类命令；Nginx 的短连接与 keepalive
 ApacheBench 测试。服务端逐个运行，避免并行争抢 CPU。Markdown 表格同时打印到
 终端并写入 `benchmark/RESULTS.md`。
+
+当前 `runtime/wasmtime/wasmtime` 是带实验 LLVM 后端的 Wasmtime 48。
+LLVM 首次编译需要 PATH 中的 `opt-19` 和 `llc-19`，编译在测试开始前完成。
+AOT 缓存在 `.cache/wasmtime-llvm/`，按运行时内容、P2 输入和编译参数区分，
+复用前校验 AOT 哈希。输入/运行时变化或缓存损坏时自动重编；有效缓存不需要 LLVM 工具。
+编译失败明确报错，不会静默回退 Cranelift。表头标明实际选择的后端。
 
 仓库内 `runtime/` 已带固定版本的预编译运行时，因此 `make bench-run`
 不需要 WALI/Wave 源码。`make bench-build` 则会用 `-O3 -flto` 重建三个
@@ -187,41 +194,41 @@ AOT 产物；路径可用 `WALI_ROOT`/`WAVE_ROOT` 覆盖。详细适配与生成
 
 ## SQLite（speedtest1 --size 25，按测试集）
 
-| 测试集 | Native | Wasmtime | WALI AOT | Wave |
+| 测试集 | Native | Wasmtime LLVM AOT | WALI AOT | Wave AOT |
 |---|---:|---:|---:|---:|
-| main | 0.354s | 0.607s | 0.541s | 0.479s |
-| orm | 0.014s | 0.024s | 0.021s | 0.019s |
-| cte | 0.031s | 0.052s | 0.044s | 0.037s |
-| json | 0.081s | 0.116s | 0.101s | 0.090s |
-| fp | 0.011s | 0.020s | 0.017s | 0.015s |
-| parsenumber | 0.004s | 0.006s | 0.006s | 0.005s |
-| rtree | 0.016s | 0.029s | 0.025s | 0.023s |
-| star | 0.007s | 0.012s | 0.010s | 0.008s |
-| app | 0.015s | 0.024s | 0.024s | 0.020s |
-| **TOTAL** | **0.533s** | **0.890s** | **0.789s** | **0.696s** |
+| main | 0.363s | 0.480s | 0.496s | 0.435s |
+| orm | 0.014s | 0.017s | 0.019s | 0.017s |
+| cte | 0.029s | 0.039s | 0.041s | 0.033s |
+| json | 0.083s | 0.089s | 0.093s | 0.086s |
+| fp | 0.012s | 0.016s | 0.016s | 0.014s |
+| parsenumber | 0.003s | 0.005s | 0.005s | 0.005s |
+| rtree | 0.017s | 0.023s | 0.024s | 0.020s |
+| star | 0.006s | 0.010s | 0.009s | 0.008s |
+| app | 0.017s | 0.022s | 0.023s | 0.020s |
+| **TOTAL** | **0.544s** | **0.701s** | **0.726s** | **0.638s** |
 
 ## Redis（redis-benchmark -n 100000 -c 50）
 
-| 命令 | Native rps | Wasmtime rps | WALI AOT rps | Wave rps |
+| 命令 | Native rps | Wasmtime LLVM AOT rps | WALI AOT rps | Wave AOT rps |
 |---|---:|---:|---:|---:|
-| SET | 106,838 | 102,041 | 109,890 | 110,742 |
-| GET | 104,712 | 100,301 | 110,497 | 110,254 |
-| INCR | 105,932 | 100,503 | 109,170 | 110,011 |
-| LPUSH | 106,383 | 102,354 | 110,011 | 109,769 |
-| RPUSH | 106,496 | 102,041 | 109,290 | 109,769 |
-| LPOP | 106,496 | 101,729 | 110,619 | 109,649 |
-| RPOP | 106,610 | 101,937 | 110,742 | 110,132 |
-| SADD | 105,485 | 101,626 | 108,814 | 109,769 |
-| HSET | 105,820 | 101,112 | 109,649 | 109,890 |
-| SPOP | 106,045 | 101,626 | 110,742 | 109,769 |
-| MSET (10 keys) | 116,009 | 86,133 | 107,527 | 110,011 |
+| SET | 102,564 | 106,838 | 108,460 | 108,460 |
+| GET | 103,520 | 106,383 | 107,411 | 108,578 |
+| INCR | 102,775 | 106,270 | 107,643 | 108,696 |
+| LPUSH | 103,520 | 106,952 | 107,875 | 109,051 |
+| RPUSH | 103,306 | 106,383 | 108,108 | 107,527 |
+| LPOP | 104,167 | 106,610 | 107,643 | 107,759 |
+| RPOP | 104,167 | 106,724 | 108,108 | 107,527 |
+| SADD | 103,306 | 105,932 | 107,527 | 107,759 |
+| HSET | 102,459 | 106,270 | 107,527 | 107,296 |
+| SPOP | 104,058 | 106,838 | 107,643 | 108,225 |
+| MSET (10 keys) | 106,045 | 93,897 | 108,460 | 104,932 |
 
 ## Nginx（短连接 -n 50000 -c 50；keepalive -n 20000 -c 120）
 
-| 场景 | Native rps | Wasmtime rps | WALI AOT rps | Wave rps |
+| 场景 | Native rps | Wasmtime LLVM AOT rps | WALI AOT rps | Wave AOT rps |
 |---|---:|---:|---:|---:|
-| 短连接 | 20,060 | 17,692 | 20,111 | 19,987 |
-| keepalive | 107,217 | 27,595 | 56,847 | 64,313 |
+| 短连接 | 19,224 | 19,114 | 19,179 | 19,192 |
+| keepalive | 105,231 | 78,486 | 73,366 | 93,928 |
 
 ## 要求
 

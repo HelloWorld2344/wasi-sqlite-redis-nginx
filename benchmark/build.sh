@@ -16,6 +16,10 @@ WASM_TOOLS="${WASM_TOOLS:?需要 WASM_TOOLS 环境变量}"
 WAMRC="${WAMRC:?需要 WAMRC 环境变量}"
 WASM_OPT_FLAGS="${WASM_OPT_FLAGS:--O3 -flto}"
 NATIVE_OPT_FLAGS="${NATIVE_OPT_FLAGS:--O3 -flto}"
+SQLITE_PGO="${SQLITE_PGO:-1}"
+SQLITE_PGO_SIZE="${SQLITE_PGO_SIZE:-100}"
+SQLITE_PGO_TRAIN_FLAGS="${SQLITE_PGO_TRAIN_FLAGS:--O3 -flto}"
+HOST_CLANG="${HOST_CLANG:-clang}"
 NPROC="$(nproc)"
 
 SQLITE_TREE="$ROOT/wasip2-sqlite/sqlite-autoconf-3530400"
@@ -28,20 +32,63 @@ mkdir -p "$STAGE/wasm" "$STAGE/wali" "$STAGE/wave"
 
 FEATURES='-DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION=1 -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_RTREE -DSQLITE_ENABLE_MATH_FUNCTIONS -DSQLITE_ENABLE_GEOPOLY -DSQLITE_ENABLE_DBSTAT_VTAB -DSQLITE_ENABLE_FTS4 -DSQLITE_ENABLE_SESSION -DSQLITE_ENABLE_PREUPDATE_HOOK -DSQLITE_ENABLE_CARRAY -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_PERCENTILE -DSQLITE_TEMP_STORE=3'
 
-echo "==> [1/7] 构建三个 P2 benchmark component（$WASM_OPT_FLAGS）"
-# Ensure the official amalgamation source exists.
-[ -f "$SQLITE_TREE/sqlite3.c" ] || make -C "$ROOT/wasip2-sqlite" sqlite WASI_SDK="$WASI_SDK" WASMTIME="$WASMTIME" >/dev/null
+# Ensure that the official amalgamation exists and has the reproducible,
+# Wasm-only VDBE/memcmp optimizations applied before PGO training/building.
+make -C "$ROOT/wasip2-sqlite" "$SQLITE_TREE/sqlite3.c" >/dev/null
+grep -q 'SQLITE_WASM_VDBE_NOINLINE sqlite3VdbeHalt' "$SQLITE_TREE/sqlite3.c" || {
+    echo "错误: SQLite Wasm VDBE 性能补丁没有应用" >&2
+    exit 1
+}
+
+SQLITE_WASM_PROFILE_FLAGS=()
+if [ "$SQLITE_PGO" = 1 ]; then
+    command -v "$HOST_CLANG" >/dev/null || {
+        echo "错误: SQLite PGO 需要 host clang（可设置 HOST_CLANG 或 SQLITE_PGO=0）" >&2
+        exit 1
+    }
+    if [ -z "${LLVM_PROFDATA:-}" ]; then
+        LLVM_PROFDATA="$(command -v llvm-profdata 2>/dev/null || command -v llvm-profdata-19 2>/dev/null || true)"
+    fi
+    [ -n "$LLVM_PROFDATA" ] && [ -x "$LLVM_PROFDATA" ] || {
+        echo "错误: SQLite PGO 需要 llvm-profdata（可设置 LLVM_PROFDATA 或 SQLITE_PGO=0）" >&2
+        exit 1
+    }
+
+    echo "==> [1/8] 训练 SQLite PGO（native speedtest1 --size $SQLITE_PGO_SIZE）"
+    PGO_DIR="$TMPBUILD/sqlite-pgo"
+    mkdir -p "$PGO_DIR/run"
+    PGO_RAW="$PGO_DIR/sqlite.profraw"
+    PGO_DATA="$PGO_DIR/sqlite.profdata"
+    "$HOST_CLANG" $SQLITE_PGO_TRAIN_FLAGS -fprofile-instr-generate="$PGO_RAW" \
+        $FEATURES -I"$SQLITE_TREE" "$HERE/sqlite/speedtest1.c" "$SQLITE_TREE/sqlite3.c" -lm \
+        -o "$PGO_DIR/speedtest1-train"
+    ( cd "$PGO_DIR/run" && LLVM_PROFILE_FILE="$PGO_RAW" \
+        "$PGO_DIR/speedtest1-train" --size "$SQLITE_PGO_SIZE" >/dev/null )
+    "$LLVM_PROFDATA" merge -output="$PGO_DATA" "$PGO_RAW"
+    # Source profiles are target-independent. A handful of OS-specific
+    # functions have different CFG hashes between native and WASI and are
+    # deliberately ignored; the matching SQLite hot functions retain counts.
+    SQLITE_WASM_PROFILE_FLAGS=(
+        -fprofile-instr-use="$PGO_DATA"
+        -Wno-profile-instr-unprofiled
+        -Wno-profile-instr-out-of-date
+    )
+else
+    echo "==> [1/8] 跳过 SQLite PGO（SQLITE_PGO=$SQLITE_PGO）"
+fi
+
+echo "==> [2/8] 构建三个 P2 benchmark component（$WASM_OPT_FLAGS）"
 "$WASI_SDK/bin/clang" --target=wasm32-wasip2 --sysroot="$WASI_SDK/share/wasi-sysroot" \
-    $WASM_OPT_FLAGS -D__wasi__ -D_GNU_SOURCE \
+    $WASM_OPT_FLAGS "${SQLITE_WASM_PROFILE_FLAGS[@]}" -D__wasi__ -D_GNU_SOURCE \
     -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS \
     -D_WASI_EMULATED_GETPID -D_WASI_EMULATED_MMAN \
-    $FEATURES -I"$SQLITE_TREE" "$HERE/sqlite/speedtest1.c" "$SQLITE_TREE/libsqlite3.a" \
+    $FEATURES -I"$SQLITE_TREE" "$HERE/sqlite/speedtest1.c" "$SQLITE_TREE/sqlite3.c" \
     -lwasi-emulated-signal -lwasi-emulated-process-clocks \
     -lwasi-emulated-getpid -lwasi-emulated-mman -lm -o "$STAGE/wasm/sqlite.wasm"
 cp "$ROOT/wasip2-redis/out/redis-server.wasm" "$STAGE/wasm/redis.wasm"
 cp "$ROOT/wasip2-nginx/out/nginx.wasm" "$STAGE/wasm/nginx.wasm"
 
-echo "==> [2/7] 重建 WALI AOT"
+echo "==> [3/8] 重建 WALI AOT"
 for app in sqlite redis nginx; do
     module_dir="$TMPBUILD/wali-$app/modules"
     mkdir -p "$module_dir"
@@ -51,7 +98,7 @@ for app in sqlite redis nginx; do
         -o "$STAGE/wali/$app.aot" "$module_dir/unbundled-module0.wasm"
 done
 
-echo "==> [3/7] 重建 Wave AOT"
+echo "==> [4/8] 重建 Wave AOT"
 build_wave_app() {
     local example="$1" input="$2" output="$3"
     make -C "$WAVE_ROOT/examples/$example" clean >/dev/null
@@ -63,11 +110,11 @@ build_wave_app speedtest1-p2 "$STAGE/wasm/sqlite.wasm" speedtest1-p2.so
 build_wave_app redis-p2 "$STAGE/wasm/redis.wasm" redis-p2.so
 build_wave_app nginx-p2 "$STAGE/wasm/nginx.wasm" nginx-p2.so
 
-echo "==> [4/7] SQLite native（$NATIVE_OPT_FLAGS）"
+echo "==> [5/8] SQLite native（$NATIVE_OPT_FLAGS）"
 gcc $NATIVE_OPT_FLAGS $FEATURES -I"$SQLITE_TREE" "$HERE/sqlite/speedtest1.c" "$SQLITE_TREE/sqlite3.c" -lm \
     -o "$STAGE/speedtest1-native"
 
-echo "==> [5/7] Redis native（$NATIVE_OPT_FLAGS）"
+echo "==> [6/8] Redis native（$NATIVE_OPT_FLAGS）"
 REDIS_NATIVE_TREE="$TMPBUILD/redis"
 cp -r "$REDIS_TREE" "$REDIS_NATIVE_TREE"
 ( cd "$REDIS_NATIVE_TREE" \
@@ -76,7 +123,7 @@ cp -r "$REDIS_TREE" "$REDIS_NATIVE_TREE"
 cp "$REDIS_NATIVE_TREE/src/redis-server" "$STAGE/redis-server-native"
 cp "$REDIS_NATIVE_TREE/src/redis-benchmark" "$STAGE/redis-benchmark"
 
-echo "==> [6/7] Nginx native（$NATIVE_OPT_FLAGS）"
+echo "==> [7/8] Nginx native（$NATIVE_OPT_FLAGS）"
 TMPN="$TMPBUILD/nginx"
 mkdir -p "$TMPN"
 cp -r "$NGINX_TREE" "$TMPN/src"
@@ -97,7 +144,7 @@ cp -r "$NGINX_TREE" "$TMPN/src"
   && make -f objs/Makefile objs/nginx -j"$NPROC" >/dev/null )
 cp "$TMPN/src/objs/nginx" "$STAGE/nginx-native"
 
-echo "==> [7/7] 提交整套匹配产物"
+echo "==> [8/8] 提交整套匹配产物"
 install -m 0644 "$STAGE/wasm/sqlite.wasm" "$HERE/sqlite/speedtest1.wasm"
 install -m 0644 "$STAGE/wasm/redis.wasm" "$HERE/redis/redis-server.wasm"
 install -m 0644 "$STAGE/wasm/nginx.wasm" "$HERE/nginx/nginx.wasm"

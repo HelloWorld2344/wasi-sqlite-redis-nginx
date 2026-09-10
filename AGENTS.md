@@ -19,8 +19,9 @@
 
 ## 修改代码时的注意事项
 
-1. **SQLite 源码零修改**（官方自带 WASI 支持），构建时从 sqlite.org 下载官方 autoconf 包
-   （不能用 GitHub 镜像——它没有预生成的 sqlite3.c，而本环境没有 tclsh）
+1. SQLite 使用 sqlite.org 官方 autoconf 包，Wasm 性能改动归档在
+   `wasip2-sqlite/sqlite-wasm-vdbe-noinline.patch`；必须保留功能、数据库格式与错误语义，
+   用标准 benchmark 和正确性测试验证。不能用没有预生成 sqlite3.c 的 GitHub 镜像。
 2. Redis/Nginx 的源码补丁以 `<app>.patch` 存档（相对各自上游基线的 `git diff`），
    源码树本身是补丁后状态；改动后记得重新导出 patch
 3. WALI/Wave 的适配改动、限制与 benchmark 分析统一记录在 `NOTICE.md`：

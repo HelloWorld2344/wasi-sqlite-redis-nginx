@@ -37,6 +37,31 @@ ngx_read_file(ngx_file_t *file, u_char *buf, size_t size, off_t offset)
 
 #if (NGX_HAVE_PREAD)
 
+#if defined(__wasi__) || defined(__wasip2__)
+    /* Preview 2 may return a bounded chunk even for a regular file.
+     * Fill the requested buffer unless EOF or an actual error is reached. */
+    {
+        size_t  done;
+
+        done = 0;
+        while (done < size) {
+            n = pread(file->fd, buf + done, size - done, offset + done);
+            if (n == -1) {
+                if (ngx_errno == NGX_EINTR) {
+                    continue;
+                }
+                ngx_log_error(NGX_LOG_CRIT, file->log, ngx_errno,
+                              "pread() \"%s\" failed", file->name.data);
+                return NGX_ERROR;
+            }
+            if (n == 0) {
+                break;
+            }
+            done += n;
+        }
+        n = done;
+    }
+#else
     n = pread(file->fd, buf, size, offset);
 
     if (n == -1) {
@@ -44,6 +69,7 @@ ngx_read_file(ngx_file_t *file, u_char *buf, size_t size, off_t offset)
                       "pread() \"%s\" failed", file->name.data);
         return NGX_ERROR;
     }
+#endif
 
 #else
 
@@ -393,6 +419,26 @@ ngx_chain_to_iovec(ngx_iovec_t *vec, ngx_chain_t *cl)
 static ssize_t
 ngx_writev_file(ngx_file_t *file, ngx_iovec_t *vec, off_t offset)
 {
+#if defined(__wasi__) || defined(__wasip2__)
+    ssize_t     n, written;
+    ngx_uint_t  i;
+
+    /* wasi-libc's pwritev only processes the first iovec. Use nginx's
+     * positional write loop for every buffer, including short writes/EINTR. */
+    written = 0;
+    for (i = 0; i < vec->count; i++) {
+        if (vec->iovs[i].iov_len == 0) {
+            continue;
+        }
+        n = ngx_write_file(file, vec->iovs[i].iov_base,
+                           vec->iovs[i].iov_len, offset + written);
+        if (n == NGX_ERROR) {
+            return NGX_ERROR;
+        }
+        written += n;
+    }
+    return written;
+#else
     ssize_t    n;
     ngx_err_t  err;
 
@@ -470,6 +516,7 @@ eintr:
     file->offset += n;
 
     return n;
+#endif
 }
 
 

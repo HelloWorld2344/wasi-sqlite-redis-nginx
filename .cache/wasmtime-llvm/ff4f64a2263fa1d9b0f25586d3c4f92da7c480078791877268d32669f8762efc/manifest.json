@@ -1,0 +1,15 @@
+{
+  "identity": {
+    "format": 1,
+    "runtime_sha256": "093944621b74e1aac3782eb29130c2209ed38b806a40f7c853216f6715886672",
+    "input_sha256": "4192eb4c872dbe80fd60e549607e50b67f4e67e52b22bf2f228b9fec2d18e843",
+    "flags": [
+      "-C",
+      "cranelift-llvm-backend=true",
+      "-C",
+      "cranelift-sse41"
+    ]
+  },
+  "aot_sha256": "2ee552226b0441c6138b08c874fb26879b546cb07981fd268ec8f26a3555ab96",
+  "source": "/home/fxs/Wasm/wasi-sqlite-redis-nginx/benchmark/sqlite/speedtest1.wasm"
+}

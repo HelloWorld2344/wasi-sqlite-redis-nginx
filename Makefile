@@ -1,3 +1,8 @@
+# The experiment runtime defaults to LLVM AOT for benchmark runs.
+# Use `make bench-run WASMTIME_BACKEND=cranelift` for the original backend.
+WASMTIME_BACKEND ?= llvm
+export WASMTIME_BACKEND
+
 # wasi-sqlite-redis-nginx/Makefile
 #
 # 三个经典应用的 WebAssembly/WASI 移植：SQLite(p2) / Redis(p2) / Nginx(p2)。
@@ -36,6 +41,13 @@ WAMRC     ?= $(WALI_ROOT)/build/wamr/wamrc-system/wamrc
 # 三个 P2 应用统一使用相同的优化级别；子 Makefile 会把该变量加入编译和链接。
 WASM_OPT_FLAGS ?= -O3 -flto
 NATIVE_OPT_FLAGS ?= -O3 -flto
+# SQLite benchmark 默认用同 workload 的 native 训练数据指导 wasm32 编译。
+# 可用 SQLITE_PGO=0 关闭；HOST_CLANG/LLVM_PROFDATA 可指定宿主工具。
+SQLITE_PGO ?= 1
+SQLITE_PGO_SIZE ?= 100
+SQLITE_PGO_TRAIN_FLAGS ?= -O3 -flto
+HOST_CLANG ?= clang
+LLVM_PROFDATA ?=
 
 .PHONY: setup check-toolchain check-runtime check-bench-runtimes check-bench-aot-tools \
 	build build-wasip2-sqlite build-wasip2-redis build-wasip2-nginx \
@@ -56,7 +68,7 @@ check-bench-runtimes:
 	@test -x "$(HERE)/runtime/wali/iwasm" || { echo "错误: runtime/ 中缺少 WALI"; exit 1; }
 	@test -x "$(HERE)/runtime/wave/wasm2c-runner" || { echo "错误: runtime/ 中缺少 Wave"; exit 1; }
 
-# bench-build 会随新 P2 component 同步重建两套 AOT；bench-run 仍只需 runtime/ 中的成品。
+# bench-build 随 P2 重建 WALI/Wave AOT；bench-run 默认生成/复用本地 LLVM AOT 缓存。
 check-bench-aot-tools:
 	@test -x "$(WASM_TOOLS)" || { echo "错误: 未找到 wasm-tools: $(WASM_TOOLS)"; exit 1; }
 	@test -x "$(WAMRC)" || { echo "错误: 未找到 WALI AOT 编译器: $(WAMRC)"; exit 1; }
@@ -118,6 +130,9 @@ bench-build: check-toolchain check-bench-runtimes check-bench-aot-tools
 		WASM_OPT_FLAGS="$(WASM_OPT_FLAGS)"
 	WASI_SDK="$(WASI_SDK)" WASMTIME="$(WASMTIME)" \
 		WASM_OPT_FLAGS="$(WASM_OPT_FLAGS)" NATIVE_OPT_FLAGS="$(NATIVE_OPT_FLAGS)" \
+		SQLITE_PGO="$(SQLITE_PGO)" SQLITE_PGO_SIZE="$(SQLITE_PGO_SIZE)" \
+		SQLITE_PGO_TRAIN_FLAGS="$(SQLITE_PGO_TRAIN_FLAGS)" \
+		HOST_CLANG="$(HOST_CLANG)" LLVM_PROFDATA="$(LLVM_PROFDATA)" \
 		WALI_ROOT="$(WALI_ROOT)" WAVE_ROOT="$(WAVE_ROOT)" \
 		WASM_TOOLS="$(WASM_TOOLS)" WAMRC="$(WAMRC)" ./benchmark/build.sh
 	./benchmark/run.sh

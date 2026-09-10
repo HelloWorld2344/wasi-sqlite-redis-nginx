@@ -91,6 +91,57 @@ runtime/wasmtime/wasmtime run --allow-precompiled -S cli --dir=. \
 统计的 SQLite 稳态执行时间。`.cwasm` 只应加载可信产物，并且与 Wasmtime 版本
 和构建配置绑定。
 
+### Wasmtime Cranelift 的 SQLite byte-load combine
+
+本地 Cranelift 在 x86-64 后 egraph 阶段识别 SQLite/WASI 编译结果中的两类
+big-endian 反序列化模式：一类把 load 后的 32-bit rotate/xor 恒等式改成原位
+`bswap`；另一类把同 base、同 flags、同基本块且精确覆盖 `0..7` 的八次
+`uload8.i64 + shift/or` 改成一次 `load.i64 + bswap`。前者不移动 load；后者只对
+Wasmtime 显式登记的非共享 Wasm 线性内存 alias region 启用。共享内存、VMContext、
+GC 和 host memory 都不会拓宽，原有越界 trap 与副作用检查保持不变。
+
+8-byte pass 原先在函数超过 1,024 条 DFG 指令时直接返回，未覆盖 CTE 中占约 9.6%
+cycles 的 `sqlite3VdbeRecordCompareWithSkip`。最终只把该 pass 的有界上限提高到
+4,096；32-bit peephole 仍维持 1,024。目标函数从 5,144 B 缩至 4,920 B。相对提高
+上限前的 Wasmtime AOT，八轮正反交错 `cte --size 250` 中位数从 7.195s 降到
+7.105s（-1.26%），instructions 从约 98.675B 降到 97.300B（-1.39%）。新增单元
+测试覆盖大于 1,024 条指令的函数。
+
+2/3/5-byte 特判、共享部分表达式 extraction 和 SQLite 源码
+`memcpy + __builtin_bswap64` 均未得到稳定额外墙钟收益，已经回退；应用源码、P2
+接口和 benchmark 内容没有改变。
+
+### SQLite 跨目标 PGO
+
+统一构建现在默认先用 host Clang 编译带 instrumentation 的同一份
+`speedtest1.c + sqlite3.c`，运行完整 `--size 100` workload，再把
+`llvm-profdata` 合并后的 source profile 用于 wasm32-wasip2 的 `-O3 -flto`
+编译。source profile 不绑定目标 ISA；本机验证中 3,901 个函数只有 9 个因
+native/WASI 条件编译导致 CFG hash 不同而被 Clang 忽略，其余 SQLite 热函数均能
+使用计数。SQLite 源码、测试参数和运行时安全语义没有改变。
+
+四轮交错测试中，未做 PGO 的 Wasmtime CTE 中位数约为 `7.116s`，PGO 版约为
+`6.180s`（-8.3%；另一组同机测试为约 -12%，受当天频率影响）。标准完整
+`--size 25` 四轮从约 `0.879s` 降到 `0.837s`（-4.8%）。最终完整四路回归为
+Native/Wasmtime/WALI/Wave `0.536/0.840/0.739/0.659s`；上一份非 PGO component
+结果为 `0.526/0.893/0.782/0.690s`。判断绝对 native 差距仍应使用同轮结果。
+
+`make bench-build` 默认启用该流程，需要 host `clang` 和 `llvm-profdata`；可用
+`HOST_CLANG`、`LLVM_PROFDATA` 指定工具，或以 `SQLITE_PGO=0` 复现非 PGO 构建。
+
+### SQLite VDBE 的 Wasm-only 源码补丁
+
+标准 `--size 25` 的 perf/DWARF 映射确认 `sqlite3VdbeExec` 仍有明显寄存器压力：
+Wasmtime 栈帧约 848 B，native 约 392 B，且热机器码中存在密集 spill/reload。
+PGO+LTO 将 `sqlite3VdbeHalt` 的 cursor/pager 退出链内联进主 opcode switch。
+`wasip2-sqlite/sqlite-wasm-vdbe-noinline.patch` 仅在 `__wasm__` 下保留 Halt 调用边界，
+并抽出 `OP_OpenDup`，使 VDBE 机器码约 240→212 KB、栈帧 848→640 B。相对最初
+版本 cycles 约 -1.20%、instructions 约 -0.61%；热 B-tree、全局 cursor helper
+和 `OP_VColumn` 拆分无收益；`OP_OpenRead/OpenWrite/ReopenIdx` 拆分也慢约 1%，
+均未保留。最新完整回归为 Native/Wasmtime/WALI/Wave
+`0.585/0.913/0.824/0.707s`；四者都受本轮较低整机频率影响，Wasmtime/native
+比值为 1.56，局部改动使用交错硬件计数判断。
+
 ### Wasmtime P2 网络 fast path
 
 Wasmtime 源码树中另外保留了四项不改变 P2 语义的本地优化：
@@ -220,71 +271,6 @@ P2 配置同时启用 Nginx `open_file_cache`。Wasmtime 短连接从
 `c=128` 时可重复出现 ApacheBench timeout，而 `c=127` 及以下完成；提高
 `worker_connections` 和 listen backlog 都不能消除该边界。为使四路测试稳定且
 保持相同请求内容，正式 keepalive 规模从 `-c 128` 调为 `-c 120`。
-
-## 统一 benchmark 结果与分析
-
-四个实现使用相同应用和 workload，服务端逐个运行；Nginx 的短连接与
-keepalive 分别启动新进程，避免前一场景遗留的连接状态影响后一场景。以下是
-同机单次完整运行结果，实际数据以每次 `make bench-build` 生成的
-`benchmark/RESULTS.md` 为准。
-
-### SQLite
-
-`speedtest1 --size 25` 运行完整默认测试集：
-
-| 实现 | TOTAL | 相对 native |
-|---|---:|---:|
-| Native | 0.533s | 1.00x |
-| Wasmtime | 0.890s | 1.67x |
-| WALI AOT | 0.789s | 1.48x |
-| Wave AOT | 0.696s | 1.31x |
-
-SQLite 主要是 Wasm 内部计算、内存访问和大量短函数调用，因此执行引擎本身的
-开销比网络 benchmark 更明显。WALI fast interpreter 的早期结果约为
-`16.3s`，慢的主要原因是每条 Wasm 指令都要经过解释分派，并非 SQLite size 25
-触发了异常 I/O；改成 AOT 后约为 `0.8s`，快约 20 倍。Wave 将 core Wasm
-静态翻译为宿主 C，WALI AOT 生成本机代码，二者都消除了主要解释器分派成本。
-
-### Redis
-
-官方 `redis-benchmark -n 100000 -c 50`：
-
-| 命令 | Native rps | Wasmtime rps | WALI AOT rps | Wave rps |
-|---|---:|---:|---:|---:|
-| SET | 106,838 | 102,041 | 109,890 | 110,742 |
-| GET | 104,712 | 100,301 | 110,497 | 110,254 |
-| INCR | 105,932 | 100,503 | 109,170 | 110,011 |
-| LPUSH | 106,383 | 102,354 | 110,011 | 109,769 |
-| RPUSH | 106,496 | 102,041 | 109,290 | 109,769 |
-| LPOP | 106,496 | 101,729 | 110,619 | 109,649 |
-| RPOP | 106,610 | 101,937 | 110,742 | 110,132 |
-| SADD | 105,485 | 101,626 | 108,814 | 109,769 |
-| HSET | 105,820 | 101,112 | 109,649 | 109,890 |
-| SPOP | 106,045 | 101,626 | 110,742 | 109,769 |
-| MSET (10 keys) | 116,009 | 86,133 | 107,527 | 110,011 |
-
-WALI AOT 和 Wave 在简单命令中比 native 高约 4%～7%，这个差距接近单次测量的
-系统调度、频率和 TCP 抖动范围，不能据此认为 Wasm 普遍快于 native。两条路径
-都把 socket 操作直接落到宿主 shim，SET/GET 的服务端计算量很小，结果主要受
-宿主网络栈与 benchmark 客户端限制。优化构建后的 Wasmtime 仍有 canonical
-ABI/资源管理成本，简单命令约为 native 的 95%～96%，MSET 的多参数和多段
-数据处理使其降到约 74%。早期 WALI fast interpreter 的 SET/GET/MSET 分别约为
-28k/32k/11k rps；AOT 消除了 Redis 命令执行部分的解释开销。
-
-### Nginx
-
-| 场景 | Native rps | Wasmtime rps | WALI AOT rps | Wave rps |
-|---|---:|---:|---:|---:|
-| 短连接，`-n 50000 -c 50` | 20,060 | 17,692 | 20,111 | 19,987 |
-| keepalive，`-n 20000 -c 120 -k` | 107,217 | 27,595 | 56,847 | 64,313 |
-
-短连接下 WALI/Wave 与 native 基本相同；Wave 偶尔略高于 native 的约 1% 同样
-属于测量噪声和宿主 shim 路径差异，不应解释为 Wasm 的固有优势。优化构建后的
-Wasmtime 在显式缓存静态文件后约为 native 的 88%。修复 P2 `TCP_NODELAY` 空实现后，
-keepalive 的 Wasmtime/WALI/Wave 分别达到 native 的约 25%/53%/59%，相对修复前
-约 2.9k rps 提升约 6.0/12/14 倍。剩余差距包含 P2 canonical ABI、resource、
-stream/poll 桥接以及 Wasmtime Tokio 异步路径的成本；但原始数量级差距的主因
-已经确认是 Nagle/delayed ACK，而不是 epoll。
 
 ## WALI 改动
 
@@ -427,6 +413,10 @@ Native 统一使用 `-O3 -flto`；新 component、WALI AOT 和 Wave AOT 先生�
 临时目录，只有整套成功后才一起替换仓库产物并刷新
 `runtime/APPS.sha256`，避免混用新应用和旧 AOT。
 
+SQLite benchmark 还默认执行上文的跨目标 PGO。训练程序和 `.profraw/.profdata`
+只存在于临时构建目录，最终提交的是使用 profile 优化后的 P2 component 及与之
+匹配的 WALI/Wave AOT；`SQLITE_PGO=0 make bench-build` 可关闭此步骤。
+
 最新一次完整运行结果由脚本写入 `benchmark/RESULTS.md`。
 
 ## 仓库内预编译运行时
@@ -456,3 +446,167 @@ wasm2c AOT 共享库放在 `runtime/wave/apps/*.so`。`make bench-run` 只使用
 - Wasmtime 在 Nginx keepalive `-c 128` 的高吞吐状态会稳定 timeout，因此统一
   benchmark 使用 `-c 120`；该边界不影响 `TCP_NODELAY` 根因判断。
 - 上述运行时目录中的改动是本地工作树改动，未自动合并到对应上游项目。
+
+## 2026-09-10 SQLite 独立后续实验
+
+使用本仓库固定 Wasmtime 和完全相同的标准 workload，当前 P2 与 Native 的
+六轮中位数为 `0.8355/0.5300s`，耗时比 1.576。新构建的基线 P2 与本仓库产物
+SHA-256 一致。OP_Column header outline 与 VDBE minsize 两项实验虽通过四组
+查询 hash 比对，却令标准耗时分别增加 1.74% 和 1.86%，因此不部署。
+详见 [实验源码、脚本与原始结果](../sqlite-next-experiments/README.md)。
+
+另外将应用端 LLVM 的热点内联阈值设为 525 的独立六轮实验中，标准耗时
+`0.8285→0.8355s`，CTE `6.3305→6.3900s`，未测得收益，亦不部署。
+
+## 2026-09-10 新保留：Cranelift 栈重载清理与 SQLite 整字比较
+
+继续针对 main 实测后，新增 x86-64 跨单前驱块的整数 spill reload 清理，以及
+SQLite Wasm 的精确范围整字 memcmp（常量长度仍交给 builtin）。六轮标准
+`--size 25` 由 `0.827→0.796s`，耗时 -3.75%、user cycles -4.08%、
+user instructions -6.74%；同轮 Native 为 0.531s，Wasmtime/native 从 1.557
+降到 1.499。CTE 六轮 `6.2645→6.2250s`，时间变化接近噪声，cycles/instructions
+各约降低 1.6%。这是相对本轮修改前的增量结果，不与历史百分比直接相加。
+
+新 pass 保持 guest 访存与 ABI 不变，对调用、safepoint、clobber、合流、回边、
+寄存器和栈槽覆盖均保守失效；198 项单元测试、184 个 x64 filetest 文件及
+487 个执行/优化/wasm 文件检查通过（8 个不支持的旧 i686 文件跳过），完整
+SQLite component 也通过寄存器分配校验器及四组结果 hash 对照。
+
+实现、原始数据和部署状态见 [本轮优化报告](../SQLITE_CRANELIFT_OPTIMIZATION_2026-09-10.md)。
+
+最终部署复核：直接加载 Wasm（含运行时编译）的六轮交错测试，SQLite TOTAL
+中位数 `0.8270→0.7905s`（-4.41%），完整进程 `2.3576→2.3264s`（-1.32%）。
+正式 runtime 与 SQLite P2/native/WALI/Wave 已更新，9 项产物 SHA 校验通过；
+部署后完整 `make bench-run`、SQLite CLI integrity_check 与 Redis 大响应往返通过。
+这与上面的预编译 AOT 对照是两组独立测量，不混合计算收益。
+
+## 2026-09-10 第二轮增量：合流 reload 与 LIKE/GLOB 扫描
+
+进一步保留 Cranelift 已访问前驱的 spill 相等事实交集，以及 SQLite Wasm 的
+两字符 LIKE/GLOB 专用扫描。相对上一轮已部署版，六轮交错 AOT 标准
+TOTAL `0.7965→0.7775s`（-2.39%），user cycles -2.51%、instructions -3.11%；
+同轮 native 0.5270s，耗时仍约 native 的 1.475 倍。放大 CTE
+`6.1565→6.0415s`（-1.87%）。memcmp 短尾部候选没有时间收益，排除。
+
+正式源码补丁、runtime、SQLite P2/native/WALI/Wave 已更新；旧文件另存于
+`sqlite-followup-experiments/before-deploy/`（相对 /home/fxs/Wasm）。
+199 项 Cranelift 单元测试、671 个 filetest 文件检查（含 8 个旧 i686 跳过）、
+完整 SQLite component 的寄存器分配校验、四组查询 hash、扫描边界检查、
+CLI integrity_check 和 Redis 大响应往返均通过。
+
+最终直接加载与完整回归结果、PGO 测量修正和后续方向见[第二轮报告](../SQLITE_CRANELIFT_FOLLOWUP_2026-09-10.md)。
+
+最终直接加载 Wasm 的六轮：SQLite TOTAL `0.7945→0.7785s`（-2.01%），
+完整进程 `2.3419→2.3257s`（-0.69%）。部署后四路三应用 `make bench-run`
+全部完成，SQLite 单轮 native/Wasmtime/WALI/Wave 为
+`0.531/0.781/0.730/0.624s`；9 项产物 SHA 校验通过。
+
+## 2026-09-10 第三轮增量：比较目标直接调用与冗余 spill 删除
+
+保留 SQLite Wasm 的 B-tree 已知整数/字符串比较目标直接调用（其他目标
+仍间接调用），以及 Cranelift 已知同值写回 spill slot 的删除。
+最终 LTO 六轮标准 AOT 对照：`0.7755→0.7575s`（-2.32%），
+user cycles -2.26%、instructions -2.91%；Native 0.5270s，耗时仍约
+native 的 1.437 倍。四轮 CTE 时间变化很小，指令数基本不变，不宣称可靠加速。
+
+整数整字解码与通用路径外提虽通过正确性验证，组合测量未胜出，没有保留。
+201 项 Cranelift 单元测试、671 个 filetest 文件检查（8 个旧 i686 跳过）、
+SQLite component checker、四组查询 hash、混合类型索引/NOCASE 冒烟和
+Redis 大响应往返均通过。正式源码、runtime 与 SQLite 四路产物已更新。
+最终直接加载与完整回归结果见[第三轮报告](../SQLITE_CRANELIFT_THIRD_2026-09-10.md)。
+
+最终直接加载 Wasm 的六轮：SQLite TOTAL `0.7760→0.7645s`（-1.48%），
+完整进程 `2.3273→2.3080s`（-0.83%）。部署后三应用四路完整 benchmark
+通过，SQLite 单轮 native/Wasmtime/WALI/Wave 为
+`0.529/0.762/0.705/0.612s`；9 项 SHA 校验全部通过。
+
+## 2026-09-10 第四轮：用已有寄存器副本替代 spill reload
+
+Cranelift 保留无效写回删除后的副本事实，并把可证明等值的栈 reload 改成
+GPR 复制。同一 SQLite P2 六轮：最终标准 AOT `0.763→0.761s`（-0.26%，
+接近波动范围），L1 data loads -3.32%；CTE `6.051→5.8615s`（-3.13%），
+L1 data loads -2.53%，指令数基本不变。标准耗时仍约 native 的 1.44 倍。
+
+直接加载 Wasm 的 SQLite TOTAL `0.7625→0.7510s`（-1.51%），含编译/启动
+的完整进程 `2.3057→2.3031s`（-0.12%），几乎不变。不同测量方式的标准
+收益幅度不一致，不宣称固定的整体加速。
+
+新 runtime 已部署；206 项单元测试、671 个文件检查（8 个旧 i686 跳过）、
+完整 SQLite checker/查询 hash/类型索引冒烟及三应用四路回归通过。
+patchable-call 汇编快照按预期复制指令更新，并新增 regalloc_checker 检查。
+应用 P2/产物清单与基线相同，9 项 SHA 校验通过。详见[第四轮报告](../SQLITE_CRANELIFT_FOURTH_2026-09-10.md)。
+
+## 2026-09-10 热点基本块对照：B-tree 两字节读取
+
+按 native / Cranelift 的 VDBE、B-tree 热地址对照后，保留 SQLite Wasm
+get2byteAligned 的精确两字节 memcpy + bswap16；普通 get2byte 扩大改写与
+BtreeNext noinline 两个候选更慢，未保留。Wasmtime runtime 源码和二进制不变。
+
+原 benchmark 六轮筛选 `0.7540→0.7430s`（-1.46%），独立六轮
+`0.7525→0.7390s`（-1.79%）；后一组 instructions -1.09%、L1 loads -2.96%，
+native 为 0.5270s，耗时比约1.40。指令采样表明净收益还涉及 VDBE 的内联/
+寄存器分配变化，不能全归因于 B-tree 局部减少一次读取。
+
+放大 CTE 首轮 `5.8725→5.9250s`（+0.89%），虽然指令减少，但并非所有
+场景都加速。最终复测、直接加载及回归状态见[热点对照报告](../SQLITE_HOT_BLOCKS_2026-09-10.md)。
+
+最终补充：第二组六轮放大 CTE `5.8415→5.8505s`（+0.15%，未测得加速）；
+直接加载 P2 的 SQLite TOTAL `0.7530→0.7355s`（-2.32%），完整进程
+`2.3028→2.2833s`（-0.85%）。正式 SQLite P2/native/WALI/Wave 已成套更新，
+完整三应用四路 benchmark、CLI 类型/索引检查、9项 SHA 和补丁重放通过。
+
+## 2026-09-10 Cranelift 16 位字节交换实验（未部署）
+
+已实现并验证移位/合并到单条 rolw $8 的识别。广泛egraph和x64 lowering
+版本均令标准耗时增加约2.5%；限制DFG规模后避免VDBE膨胀，但两组六轮标准
+`0.7420→0.7425s`、`0.7405→0.7410s`，未测得收益；放大CTE慢约1.14%。
+局部指令变短没有带来整体加速，因此正式Cranelift源码已恢复，runtime与
+SQLite/P2/AOT产物未更换，保留上一轮版本。完整补丁、正确性验证和原始数据
+见[16位字节交换实验](../SQLITE_BSWAP16_2026-09-10.md)。
+
+
+## 2026-09-10：bench-run 接入 Wasmtime LLVM
+
+用户复制的 Wasmtime 二进制包含实验 LLVM 后端，但原 `benchmark/run.sh` 没有
+传入 LLVM 开关，因此此前 0.754s 的 Wasmtime 列实际仍使用 Cranelift。
+现在 `make bench-run` 默认使用 LLVM AOT；通过
+`make bench-run WASMTIME_BACKEND=cranelift` 切回原后端，表头明确区分二者。
+
+`benchmark/wasmtime-llvm-aot.py` 编译当前 benchmark 的同一份 P2，按运行时 SHA-256、
+输入 SHA-256、编译参数建立缓存，并验证输出 AOT 哈希。缓存位于 `.cache/wasmtime-llvm/`，
+有锁及临时构建文件保护。首次/失效时需要 opt-19、llc-19，有效缓存执行不需要 LLVM 工具。
+所有编译在计时和服务启动前完成；编译失败直接报错。未替换三个 P2 或 WALI/Wave AOT，
+原 `runtime/APPS.sha256` 校验继续执行。这里只接入编译后端和缓存，没有合入实验区
+Redis/Nginx 的额外应用兼容性补丁。
+
+本轮完整 `make bench-run` 四路执行成功，SQLite 单轮 TOTAL 为 native 0.544s、
+Wasmtime LLVM AOT 0.709s、WALI 0.719s、Wave 0.629s；Redis/Nginx 负载完成。
+小组件验证了缓存命中、输入变更失效和损坏重编；三个实际应用缓存均验证在
+PATH 不含 LLVM 工具时命中。实际结果见 `benchmark/RESULTS.md`。
+
+
+## 2026-09-10：Wasmtime P2 输出流容量与 Nginx keepalive
+
+独立 Wasmtime LLVM 源码把 `WriteState::Ready` 的判断改为内部有界缓冲容量，
+不再为每次 check-write 查询 socket writable / 消耗 Tokio cooperative budget。
+真实背压仍进入原 Writing 异步状态，保留64 KiB上限、许可消费、关闭和错误处理。
+低层测试复现旧实现空闲时返回0许可，新实现通过；16 MiB慢客户端/中途断连、
+原 Redis/Nginx 功能检查和 SQLite 五组哈希校验通过。
+同输入、20000请求/120并发、交替顺序四轮中位数：旧26309、新47347 rps，约+80%。
+新运行时来自 `wasmtime-llvm-experiment/runtime/llvm-keepalive/`，已安装至项目
+`runtime/wasmtime/wasmtime`；旧版保留在实验区 `runtime/llvm-p2/`。
+本轮未改应用P2或WALI/Wave；完整记录见实验区 `NGINX_KEEPALIVE.md`。
+
+最终打包运行时交替四轮复验中位数为旧27098、新46803 rps（+72.7%）；
+原项目完整 `make bench-run` 的 keepalive 为 native105510、LLVM55197、
+WALI55163、Wave63982 rps，SQLite LLVM 0.707s。初期候选+80%是前一组独立记录，
+最终同轮收益以+72.7%为准。三个应用的新旧AOT哈希全部相同，收益来自宿主修改。
+
+
+## Nginx 合并写入与 Wasmtime I/O（2026-09-10）
+
+WASI ngx_writev 对不超过4KiB的多段数据合并写入，保留短写和错误处理。
+已同步早先验证的FIONREAD/pread/pwritev兼容修复，并重建匹配的WALI/Wave Nginx AOT。
+LLVM benchmark默认启用 Wasmtime `--io-current-thread`；
+`WASMTIME_IO_CURRENT_THREAD=0 make bench-run` 可关闭该调度选项。
+原输入/产物备份及详细验证见 [报告](../wasmtime-llvm-experiment/NGINX_IO_OPTIMIZATIONS.md)。

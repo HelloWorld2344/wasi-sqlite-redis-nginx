@@ -187,6 +187,21 @@ ngx_writev(ngx_connection_t *c, ngx_iovec_t *vec)
 eintr:
 
 #ifdef __wasi__
+    /* Coalesce small scatter/gather writes before entering a P2 stream.
+     * write() still reports the exact prefix accepted, so the caller's
+     * normal chain advancement also handles a short write or EAGAIN.
+     * Bound the temporary storage and keep large/single-buffer writes on
+     * the existing path. No data remains buffered after this call.
+     */
+    if (vec->count > 1 && vec->size <= 4096) {
+        u_char buffer[4096];
+        u_char *p = buffer;
+        for (ngx_uint_t i = 0; i < vec->count; i++) {
+            p = ngx_cpymem(p, vec->iovs[i].iov_base, vec->iovs[i].iov_len);
+        }
+        n = write(c->fd, buffer, vec->size);
+        goto eintr_done;
+    }
     /* wasi-libc p2 的 writev 只写第一个 iov（实测），逐段 write 代替 */
     {
         ssize_t total = 0;

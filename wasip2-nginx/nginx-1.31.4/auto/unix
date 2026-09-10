@@ -946,7 +946,12 @@ ngx_feature_incs="#include <sys/ioctl.h>
                   $NGX_INCLUDE_SYS_FILIO_H"
 ngx_feature_path=
 ngx_feature_libs=
-ngx_feature_test="int i = FIONREAD; printf(\"%d\", i)"
+# wasi-libc declares FIONREAD, but its Preview 2 ioctl returns ENOTSUP.
+# Keep nginx's normal non-FIONREAD recv/readv fallback on this target.
+ngx_feature_test="#if defined(__wasi__) || defined(__wasip2__)
+                 #error FIONREAD is not implemented by wasi-libc
+                 #endif
+                 int i = FIONREAD; printf(\"%d\", i)"
 . auto/feature
 
 

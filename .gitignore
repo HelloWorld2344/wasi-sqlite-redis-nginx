@@ -42,7 +42,7 @@ wasip2-redis/redis-data/
 !wasip2-nginx/run/logs/.gitkeep
 
 # IDE / OS
-.cache/
+# .cache/
 .vs/
 .vscode/
 

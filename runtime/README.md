@@ -27,3 +27,26 @@ WALI 和 Wave 的源码改动及 AOT 生成方法记录在仓库根目录的 `NO
 
 各项目许可证随二进制分别放在 `wasmtime/LICENSE`、`wali/LICENSE` 和
 `wave/LICENSE`。
+
+
+## 实验 LLVM benchmark 入口
+
+当前复制到 `wasmtime/wasmtime` 的运行时包含 LLVM 后端。
+`make bench-run` 默认启用 LLVM，在项目 `.cache/wasmtime-llvm/` 下编译/复用三个
+benchmark 原始 P2 输入的 Wasmtime AOT，不使用实验区不同版本的 Redis/Nginx 输入。
+首次或缓存失效时需要 `opt-19` / `llc-19`；有效缓存执行不需要这些编译工具。
+`make bench-run WASMTIME_BACKEND=cranelift` 使用原 Cranelift 路径。
+缓存有运行时、输入、参数和输出哈希校验，替换运行时后会自动失效。
+
+当前安装的是 `wasmtime-llvm-experiment/runtime/llvm-keepalive/wasmtime` 候选，
+包含 P2 TCP 空闲写缓冲直接发放有界许可的优化。最终交替对照 Nginx keepalive
+提升约72.7%；原项目本轮为55197 rps。应用及 WALI/Wave 输入保持不变，
+完整源码、补丁、验证和恢复方法见实验区 `NGINX_KEEPALIVE.md`。
+
+
+### Nginx I/O 更新（2026-09-10）
+
+Wasmtime包含显式CLI选项 `run --io-current-thread`，LLVM benchmark默认使用它。
+未指定时CLI保持原有多线程Tokio驱动。Nginx的P2/WALI/Wave AOT均来自合并小响应的新P2输入，
+已更新APPS.sha256；WALI/Wave运行时二进制未替换。
+包及验证：[llvm-nginx-io](../../wasmtime-llvm-experiment/runtime/llvm-nginx-io/)。
